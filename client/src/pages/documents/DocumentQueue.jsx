@@ -78,8 +78,21 @@ export default function DocumentQueue() {
       </div>
       {error && <p className="message message-bad">{error}</p>}
       {documents.length === 0 ? (
-        <p className="card">No documents in this view. Upload a photo, scan or PDF.</p>
+        <p className="card">No receipts in this view. Take a photo of one.</p>
       ) : (
+        <>
+        <div className="doc-cards">
+          {documents.map((doc) => (
+            <Link key={doc.id} to={`/documents/${doc.id}`} className="card doc-card">
+              <div className="title-row">
+                <strong>{doc.typeLabel}</strong>
+                <StatusBadge status={doc.status} />
+              </div>
+              <p>{doc.searchParty || 'Party not read yet'}</p>
+              <p className="subtext">{doc.searchDate || '—'} · {formatRupiah(doc.searchTotal)}</p>
+            </Link>
+          ))}
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -107,6 +120,7 @@ export default function DocumentQueue() {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </>
   );

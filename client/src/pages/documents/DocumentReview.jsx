@@ -127,6 +127,9 @@ export default function DocumentReview() {
         <h1>{document.typeLabel}</h1>
         <StatusBadge status={document.status} />
       </div>
+      {['uploaded', 'processing'].includes(document.status) && (
+        <p className="message message-warn">Reading the receipt. Stay on this page.</p>
+      )}
       {document.failureMessage && <p className="message message-bad">{document.failureMessage}</p>}
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}

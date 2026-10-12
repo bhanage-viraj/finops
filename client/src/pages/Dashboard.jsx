@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchStats } from '../api/documents.js';
+import UploadDropzone from '../components/UploadDropzone.jsx';
 
 const CARDS = [
   ['total', 'Documents', '/documents'],
@@ -22,6 +23,7 @@ export default function Dashboard() {
   return (
     <>
       <h1>Overview</h1>
+      <UploadDropzone />
       {error && <p className="message message-bad">{error}</p>}
       <div className="stat-grid">
         {CARDS.map(([key, label, to]) => (

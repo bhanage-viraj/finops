@@ -12,7 +12,10 @@ export default function Layout() {
       </aside>
       <div className="workspace">
         <header className="phone-bar">
-          <strong>FinOps</strong>
+          <div className="phone-bar-top">
+            <strong>FinOps</strong>
+            <button type="button" className="btn btn-secondary" onClick={signOut}>Sign out</button>
+          </div>
           <Sidebar />
         </header>
         <div className="topbar">

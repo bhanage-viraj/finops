@@ -29,6 +29,7 @@ export async function api(path, { method = 'GET', json, body, headers } = {}) {
     const error = new Error(data.error || 'The request failed.');
     error.status = response.status;
     error.issues = data.issues || [];
+    error.rejected = data.rejected || [];
     throw error;
   }
   return data;
