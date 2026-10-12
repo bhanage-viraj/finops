@@ -1,0 +1,19 @@
+# Local MongoDB only. No ERP, storage, or other services.
+services:
+  mongo:
+    image: mongo:7
+    container_name: finops-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - finops_mongo:/data/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  finops_mongo:

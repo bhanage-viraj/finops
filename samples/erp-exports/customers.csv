@@ -1,0 +1,14 @@
+name,aliases,erpCustomerId,paymentTermsDays,deliveryFeeRule,phone
+Depot Tirta Makmur,Tirta Makmur,CUST-1001,14,flat-15000,080100000001
+Toko Air Sejahtera,Air Sejahtera,CUST-1002,7,per-gallon-2000,080100000002
+UD Galon Barokah,Galon Barokah,CUST-1003,30,flat-20000,080100000003
+Warung Bu Lastri,Bu Lastri,CUST-1004,7,none,080100000004
+PT Minum Jernih,Minum Jernih,CUST-1005,21,flat-25000,080100000005
+Koperasi Sumber Rezeki,Sumber Rezeki,CUST-1006,14,per-gallon-1500,080100000006
+Rumah Makan Daun Hijau,Daun Hijau,CUST-1007,7,flat-10000,080100000007
+Toko Plastik Surya,Plastik Surya,CUST-1008,14,none,080100000008
+Klinik Bina Sehat,Bina Sehat,CUST-1009,30,flat-15000,080100000009
+Sekolah Dasar Harapan,SD Harapan,CUST-1010,14,flat-0,080100000010
+Bengkel Mitra Jaya,Mitra Jaya,CUST-1011,7,none,080100000011
+Hotel Cemara Indah,Cemara Indah,CUST-1012,21,flat-30000,080100000012
+PT Tigris Inovatif Solusi,Tigris Inovatif Solusi,CUST-2001,14,none,080100000201

@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "index.js": {
+      "includeFiles": "{client/dist/**,samples/real/zoho-account-rules.json}",
+      "maxDuration": 60
+    }
+  }
+}

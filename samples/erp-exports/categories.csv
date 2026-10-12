@@ -1,0 +1,13 @@
+name,erpCode,active
+Bahan bakar kendaraan,EXP-BBM,true
+Galon kosong,EXP-GALON,true
+Botol dan tutup,EXP-BOTOL,true
+Suku cadang kendaraan,EXP-PART,true
+Listrik gudang,EXP-LISTRIK,true
+Air baku,EXP-AIR,true
+Kemasan dan label,EXP-KEMAS,true
+Perawatan pompa,EXP-POMPA,true
+ATK kantor,EXP-ATK,true
+Konsumsi lapangan,EXP-KONSUMSI,true
+Sewa gudang,EXP-SEWA,true
+Ongkos kirim,EXP-ONGKIR,true

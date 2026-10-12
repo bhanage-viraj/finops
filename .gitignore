@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Secrets. The committed template is .env.example.
+.env
+.env.*
+!.env.example
+
+# Uploaded receipts, screenshots, and local file storage
+uploads/
+
+# Build output
+dist/
+build/
+coverage/
+
+# Real customer data, receipts, and screenshots.
+# Fake files already in samples/ stay in git. Put anything real here and it is ignored.
+samples/real/
+
+# Logs and local editor files
+*.log
+.DS_Store
