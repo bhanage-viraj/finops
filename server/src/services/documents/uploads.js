@@ -17,6 +17,34 @@ function isWebp(bytes) {
     && bytes.toString('ascii', 8, 12) === 'WEBP';
 }
 
+const HEIF_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1', 'avif']);
+
+export function displayFileName(name) {
+  const base = String(name || 'document').split(/[/\\]/).pop();
+  try {
+    return decodeURIComponent(base).slice(0, 180);
+  } catch {
+    return base.slice(0, 180);
+  }
+}
+
+export function isHeic(bytes) {
+  if (!bytes || bytes.length < 12) return false;
+  if (bytes.toString('ascii', 4, 8) !== 'ftyp') return false;
+  return HEIF_BRANDS.has(bytes.toString('ascii', 8, 12));
+}
+
+// iPhone photos are often HEIC. Chrome cannot redraw those, so convert here.
+export async function prepareStoredBytes(bytes) {
+  if (!isHeic(bytes)) return bytes;
+  const sharp = (await import('sharp')).default;
+  const jpeg = await sharp(bytes, { failOn: 'none', limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 85 }).toBuffer();
+  if (!jpeg?.length || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) {
+    throw new Error('This photo could not be prepared.');
+  }
+  return jpeg;
+}
+
 export function inspectUpload({ filename = 'document', bytes, maxBytes }) {
   if (!bytes || bytes.length === 0) {
     return { ok: false, error: `${filename} is empty.` };

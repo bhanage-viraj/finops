@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import path from 'node:path';
 import mongoose from 'mongoose';
 import AuditLog from '../../models/AuditLog.js';
 import Document from '../../models/Document.js';
@@ -11,7 +10,7 @@ import { describeZohoPlan } from './zohoAccounts.js';
 import { DOCUMENT_TYPES, TYPE_LABELS, fieldsFor } from './fieldCatalog.js';
 import { normalizeEdits, searchFields } from './normalize.js';
 import { processDocument } from './pipeline.js';
-import { inspectUpload, pdfPageCount } from './uploads.js';
+import { displayFileName, inspectUpload, pdfPageCount, prepareStoredBytes } from './uploads.js';
 import { validateDocument } from './validateDocument.js';
 import { httpError } from '../../utils/http.js';
 
@@ -64,7 +63,7 @@ export function toDto(doc, history = []) {
   });
   return {
     id: doc._id,
-    originalName: doc.originalName,
+    originalName: displayFileName(doc.originalName),
     mimeType: doc.mimeType,
     size: doc.size,
     pageCount: doc.pageCount,
@@ -131,13 +130,21 @@ export async function createDocuments({ user, files, idempotencyKey, env }) {
   const created = [];
   const rejected = [];
   for (const file of files || []) {
+    const name = displayFileName(file.originalname);
+    let bytes = file.buffer;
+    try {
+      bytes = await prepareStoredBytes(bytes);
+    } catch {
+      rejected.push({ name, error: 'This photo could not be prepared. Save it as a JPEG and try again.' });
+      continue;
+    }
     const check = inspectUpload({
-      filename: file.originalname,
-      bytes: file.buffer,
+      filename: name,
+      bytes,
       maxBytes: env.upload.maxBytes,
     });
     if (!check.ok) {
-      rejected.push({ name: file.originalname, error: check.error });
+      rejected.push({ name, error: check.error });
       continue;
     }
     if (idempotencyKey && files.length === 1) {
@@ -147,14 +154,14 @@ export async function createDocuments({ user, files, idempotencyKey, env }) {
         continue;
       }
     }
-    const sha256 = createHash('sha256').update(file.buffer).digest('hex');
-    const key = await storage.save(file.buffer, extensionFor(check.mime));
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const key = await storage.save(bytes, extensionFor(check.mime));
     const doc = await Document.create({
       uploadedBy: user.id,
       originalFileKey: key,
-      originalName: path.basename(file.originalname || 'document').slice(0, 180),
+      originalName: name,
       mimeType: check.mime,
-      size: file.buffer.length,
+      size: bytes.length,
       sha256,
       pageCount: check.mime === 'application/pdf' ? pdfPageCount(file.buffer) : 1,
       status: 'uploaded',
