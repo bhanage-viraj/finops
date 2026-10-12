@@ -33,7 +33,8 @@ export function createApp(env, options = {}) {
   }
 
   app.use(helmet());
-  app.use(cors({ origin: env.clientUrl }));
+  const allowedOrigins = [...new Set([env.clientUrl, 'http://localhost:5173'])];
+  app.use(cors({ origin: allowedOrigins }));
   app.use(morgan('dev', {
     skip: (req) => req.path.startsWith('/auth/zoho/callback'),
   }));
