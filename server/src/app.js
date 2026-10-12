@@ -32,7 +32,16 @@ export function createApp(env, options = {}) {
     });
   }
 
-  app.use(helmet());
+  // Receipt photos are drawn from blob URLs. The default image rule blocks those.
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        'img-src': ["'self'", 'data:', 'blob:'],
+        'frame-src': ["'self'", 'blob:'],
+      },
+    },
+  }));
   const allowedOrigins = [...new Set([env.clientUrl, 'http://localhost:5173'])];
   app.use(cors({ origin: allowedOrigins }));
   app.use(morgan('dev', {
