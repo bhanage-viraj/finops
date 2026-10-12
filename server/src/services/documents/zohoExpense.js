@@ -39,23 +39,28 @@ export function buildExpensePayload(doc, plan) {
   };
 }
 
-async function loadReceipt(doc, env) {
-  const ext = receiptExtension(doc.mimeType, doc.originalName);
-  if (!ext) {
-    return {
-      file: null,
-      note: 'The original file type cannot be attached in Zoho Books. The expense was created without the file.',
-    };
-  }
+export async function receiptForZoho({ bytes, mimeType, name }) {
+  const ext = receiptExtension(mimeType, name);
+  if (ext) return { bytes, mimeType, name: name || `receipt.${ext}` };
   try {
-    const bytes = await createFileStorage(env.upload.dir).read(doc.originalFileKey);
-    return {
-      file: { bytes, mimeType: doc.mimeType, name: doc.originalName || `receipt.${ext}` },
-      note: '',
-    };
+    const sharp = (await import('sharp')).default;
+    const jpeg = await sharp(bytes, { failOn: 'none', limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 85 }).toBuffer();
+    if (!jpeg?.length) throw new Error('empty');
+    return { bytes: jpeg, mimeType: 'image/jpeg', name: 'receipt.jpg' };
+  } catch {
+    throw httpError(400, 'This photo could not be prepared for Zoho Books, so nothing was sent.');
+  }
+}
+
+async function loadReceipt(doc, env) {
+  let bytes;
+  try {
+    bytes = await createFileStorage(env.upload.dir).read(doc.originalFileKey);
   } catch {
     throw httpError(400, 'The original file could not be read, so nothing was sent.');
   }
+  const file = await receiptForZoho({ bytes, mimeType: doc.mimeType, name: doc.originalName });
+  return { file, note: '' };
 }
 
 async function rememberExpense(id, expenseId, user, receiptAttached, receiptNote, plan) {

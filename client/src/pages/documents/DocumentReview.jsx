@@ -194,7 +194,10 @@ export default function DocumentReview() {
                 </select>
               </label>
               {document.zohoExpense?.expenseId && (
-                <p className="message message-ok">Zoho expense {document.zohoExpense.expenseId}</p>
+                <p className="message message-ok">
+                  Zoho expense {document.zohoExpense.expenseId}.
+                  {document.zohoExpense.receiptAttached ? ' The photo is in Zoho Books.' : ''}
+                </p>
               )}
               {document.zohoExpense?.lastError && <p className="message message-bad">{document.zohoExpense.lastError}</p>}
               {draft && (
@@ -213,7 +216,7 @@ export default function DocumentReview() {
                   <button type="button" className="btn btn-secondary" disabled={!planComplete} onClick={testExpense}>Test before sending</button>
                 )}
                 {reviewer && document.status === 'approved' && !document.zohoExpense?.expenseId && (
-                  <button type="button" className="btn btn-primary" disabled={!planComplete} onClick={sendExpense}>Send expense to Zoho</button>
+                  <button type="button" className="btn btn-primary" disabled={!planComplete} onClick={sendExpense}>Send expense and photo to Zoho</button>
                 )}
                 {document.status === 'failed' && (
                   <button type="button" className="btn btn-primary" onClick={() => run(() => retryDocument(id))}>Retry reading</button>

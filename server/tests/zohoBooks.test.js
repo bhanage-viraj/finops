@@ -5,6 +5,7 @@ import {
   authorizationUrl, clearZohoTokenCache, createExpense, createOauthState, exchangeAuthCode,
   missingZohoConfig, receiptExtension, verifyOauthState, ZOHO_EXPENSE_SCOPE,
 } from '../src/integrations/erp/zohoBooks.js';
+import { receiptForZoho } from '../src/services/documents/zohoExpense.js';
 
 const zoho = {
   clientId: 'client-id',
@@ -61,8 +62,8 @@ test('missing Zoho settings are named and account ids are not invented', () => {
   ].sort());
 });
 
-test('WebP cannot be attached to a Zoho expense', () => {
-  assert.equal(receiptExtension('image/webp', 'slip.png'), '');
+test('Zoho accepts jpeg, png and pdf receipts, and not webp by itself', () => {
+  assert.equal(receiptExtension('image/webp', 'slip.webp'), '');
   assert.equal(receiptExtension('image/png', 'slip.png'), 'png');
   assert.equal(receiptExtension('application/pdf', 'slip.pdf'), 'pdf');
 });
@@ -164,6 +165,18 @@ test('a non-numeric account id is refused before any request', async () => {
     /account ids/,
   );
   assert.equal(called, false);
+});
+
+test('a WebP photo is converted to JPEG before it is sent to Zoho Books', async () => {
+  const sharp = (await import('sharp')).default;
+  const webp = await sharp({
+    create: { width: 8, height: 8, channels: 3, background: { r: 200, g: 10, b: 10 } },
+  }).webp().toBuffer();
+  const file = await receiptForZoho({ bytes: webp, mimeType: 'image/webp', name: 'slip.webp' });
+  assert.equal(file.mimeType, 'image/jpeg');
+  assert.equal(file.name, 'receipt.jpg');
+  assert.equal(file.bytes[0], 0xff);
+  assert.equal(file.bytes[1], 0xd8);
 });
 
 test('the code exchange calls only the token endpoint', async () => {
