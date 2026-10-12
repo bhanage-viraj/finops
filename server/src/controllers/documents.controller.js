@@ -4,7 +4,7 @@ import {
   loadDocument, rejectDocument, retryDocument, submitDocument, updateDocument,
 } from '../services/documents/documentService.js';
 import { previewZohoExpense, selectZohoAccount, sendZohoExpense } from '../services/documents/zohoExpense.js';
-import { asyncHandler } from '../utils/http.js';
+import { asyncHandler, httpError } from '../utils/http.js';
 
 export function uploadDocuments(env) {
   return asyncHandler(async (req, res) => {
@@ -47,7 +47,15 @@ export function file(env) {
   return asyncHandler(async (req, res) => {
     const doc = await loadDocument(req.params.id, req.user);
     const { key, mimeType } = fileKeyFor(doc, req.query.which);
-    const bytes = await createFileStorage(env.upload.dir).read(key);
+    let bytes;
+    try {
+      bytes = await createFileStorage(env.upload.dir).read(key);
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        throw httpError(404, 'This photo is no longer stored. Upload the receipt again.');
+      }
+      throw error;
+    }
     res.set('Content-Type', mimeType);
     res.set('Content-Disposition', 'inline');
     res.set('Cache-Control', 'private, max-age=60');

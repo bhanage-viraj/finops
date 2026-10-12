@@ -58,6 +58,8 @@ test('processing, approval and retry stay on one saved document', async (t) => {
   });
   const storage = createFileStorage(dir);
   const key = await storage.save(Buffer.from('original-file'), '.png');
+  await fs.rm(path.join(dir, key));
+  assert.equal((await storage.read(key)).toString(), 'original-file');
   const created = await Document.create({
     uploadedBy: staff._id,
     originalFileKey: key,

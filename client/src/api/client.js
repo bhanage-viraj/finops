@@ -39,6 +39,15 @@ export async function apiFile(path) {
   const response = await fetch(path, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!response.ok) throw new Error('The file could not be opened.');
+  if (!response.ok) {
+    const text = await response.text();
+    let message = 'The file could not be opened.';
+    try {
+      message = JSON.parse(text).error || message;
+    } catch {
+      // The server did not return JSON.
+    }
+    throw new Error(message);
+  }
   return { blob: await response.blob(), mimeType: response.headers.get('content-type') || '' };
 }

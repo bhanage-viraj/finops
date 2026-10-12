@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import StoredFile from '../../models/StoredFile.js';
 
 function safePath(root, key) {
   const full = path.resolve(root, key);
@@ -18,10 +19,19 @@ export function createFileStorage(root) {
       const full = safePath(root, key);
       await fs.mkdir(path.dirname(full), { recursive: true });
       await fs.writeFile(full, bytes);
+      await StoredFile.updateOne({ key }, { data: bytes }, { upsert: true });
       return key;
     },
     async read(key) {
-      return fs.readFile(safePath(root, key));
+      const full = safePath(root, key);
+      try {
+        return await fs.readFile(full);
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        const stored = await StoredFile.findOne({ key });
+        if (!stored) throw error;
+        return stored.data;
+      }
     },
   };
 }
