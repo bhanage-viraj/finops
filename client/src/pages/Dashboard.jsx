@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchSettings, setExpenseExport, startZohoConnect } from '../api/admin.js';
+import { clearAllDocuments, fetchSettings, setExpenseExport, startZohoConnect } from '../api/admin.js';
 import { fetchStats } from '../api/documents.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import UploadDropzone from '../components/UploadDropzone.jsx';
@@ -60,6 +60,21 @@ function ZohoConnect() {
     }
   }
 
+  async function clearReceipts() {
+    if (!window.confirm('Delete every receipt and its photo? This cannot be undone.')) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await clearAllDocuments();
+      setMessage(`${result.documentsDeleted} receipt${result.documentsDeleted === 1 ? '' : 's'} deleted.`);
+      window.location.reload();
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
   const missing = settings?.zohoMissing || [];
   const connected = settings?.zohoConnected === true;
   const exportOn = settings?.erpFeaturesEnabled === true;
@@ -89,6 +104,9 @@ function ZohoConnect() {
         </button>
         <button type="button" className="btn btn-secondary" disabled={busy || !settings} onClick={toggleExport}>
           {exportOn ? 'Turn expense export off' : 'Turn expense export on'}
+        </button>
+        <button type="button" className="btn btn-secondary" disabled={busy} onClick={clearReceipts}>
+          Clear all receipts
         </button>
       </div>
     </section>

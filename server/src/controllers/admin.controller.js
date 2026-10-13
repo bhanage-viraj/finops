@@ -1,4 +1,6 @@
-import { readErpSettings, setErpFeaturesEnabled, setZohoAccountRules } from '../services/admin/erpSettings.js';
+import {
+  clearAllDocuments, readErpSettings, setErpFeaturesEnabled, setZohoAccountRules,
+} from '../services/admin/erpSettings.js';
 import { asyncHandler } from '../utils/http.js';
 
 export function getSettings(env) {
@@ -16,5 +18,11 @@ export function updateSettings(env) {
 export function updateAccounts(env) {
   return asyncHandler(async (req, res) => {
     res.json(await setZohoAccountRules(req.user, req.body?.rules, env));
+  });
+}
+
+export function clearDocuments() {
+  return asyncHandler(async (req, res) => {
+    res.json(await clearAllDocuments(req.user));
   });
 }

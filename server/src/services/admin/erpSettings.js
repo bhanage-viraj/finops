@@ -1,4 +1,7 @@
+import AuditLog from '../../models/AuditLog.js';
+import Document from '../../models/Document.js';
 import Setting from '../../models/Setting.js';
+import StoredFile from '../../models/StoredFile.js';
 import { writeAudit } from '../audit/auditLogger.js';
 import { missingZohoConfig } from '../../integrations/erp/zohoBooks.js';
 import { compactKey, paymentKey, ZOHO_EXPENSE_TYPES } from '../documents/zohoAccounts.js';
@@ -76,6 +79,30 @@ export async function setErpFeaturesEnabled(user, enabled, env) {
     after: { erpFeaturesEnabled: enabled },
   });
   return present(settings, env);
+}
+
+export async function clearAllDocuments(user) {
+  const docs = await Document.find({}).select('originalFileKey preprocessedFileKey').lean();
+  const keys = docs.flatMap((doc) => [doc.originalFileKey, doc.preprocessedFileKey]).filter(Boolean);
+  const stored = keys.length ? await StoredFile.deleteMany({ key: { $in: keys } }) : { deletedCount: 0 };
+  const audits = await AuditLog.deleteMany({ entity: 'documents' });
+  const removed = await Document.deleteMany({});
+  await writeAudit({
+    userId: user.id,
+    action: 'documents.clear',
+    entity: 'settings',
+    entityId: null,
+    after: {
+      documentsDeleted: removed.deletedCount,
+      storedFilesDeleted: stored.deletedCount,
+      auditLogsDeleted: audits.deletedCount,
+    },
+  });
+  return {
+    documentsDeleted: removed.deletedCount,
+    storedFilesDeleted: stored.deletedCount,
+    auditLogsDeleted: audits.deletedCount,
+  };
 }
 
 export async function setZohoAccountRules(user, rules, env) {

@@ -11,3 +11,7 @@ export function setExpenseExport(enabled) {
 export function startZohoConnect() {
   return api('/auth/zoho/start');
 }
+
+export function clearAllDocuments() {
+  return api('/admin/documents/clear', { method: 'POST' });
+}
