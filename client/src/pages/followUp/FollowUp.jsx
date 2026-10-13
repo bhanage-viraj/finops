@@ -15,6 +15,40 @@ function whatsappUrl(phone, text) {
   return `https://wa.me/?text=${q}`;
 }
 
+function MessageDraft({ selected, message, note, onMessageChange, onCopy }) {
+  if (!selected) {
+    return <p className="muted">Select a customer from the list.</p>;
+  }
+  return (
+    <>
+      <p className="hint">
+        {selected.customerName || 'Customer'} · {selected.invoiceNumber || '—'} · {formatRupiah(selected.balance)}
+      </p>
+      <label className="field">
+        <span className="field-label">Custom message</span>
+        <textarea
+          rows={8}
+          value={message}
+          onChange={(event) => onMessageChange(event.target.value)}
+        />
+      </label>
+      <p className="hint">Draft only. Send from WhatsApp yourself.</p>
+      {note && <p className="message message-ok">{note}</p>}
+      <div className="actions">
+        <button type="button" className="btn btn-secondary" onClick={onCopy}>Copy</button>
+        <a
+          className="btn btn-primary"
+          href={whatsappUrl(selected.customerPhone, message)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open WhatsApp
+        </a>
+      </div>
+    </>
+  );
+}
+
 export default function FollowUp() {
   const [invoices, setInvoices] = useState([]);
   const [asOf, setAsOf] = useState('');
@@ -30,13 +64,8 @@ export default function FollowUp() {
     fetchFollowUpToday()
       .then((body) => {
         if (cancelled) return;
-        const list = body.invoices || [];
-        setInvoices(list);
+        setInvoices(body.invoices || []);
         setAsOf(body.asOf || '');
-        if (list[0]) {
-          setSelectedId(list[0].invoiceId);
-          setMessage(list[0].messageDraft || '');
-        }
       })
       .catch((err) => {
         if (!cancelled) setError(err.message);
@@ -53,11 +82,12 @@ export default function FollowUp() {
     setSelectedId(invoice.invoiceId);
     setMessage(invoice.messageDraft || '');
     setNote('');
-    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 700px)').matches) {
-      window.requestAnimationFrame(() => {
-        document.getElementById('followup-message')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.requestAnimationFrame(() => {
+      document.getElementById(`followup-inline-${invoice.invoiceId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
       });
-    }
+    });
   }
 
   async function copyMessage() {
@@ -124,62 +154,54 @@ export default function FollowUp() {
               </table>
             </div>
             <div className="doc-cards">
-              {invoices.map((invoice) => (
-                <div
-                  key={invoice.invoiceId}
-                  className={`card doc-card${invoice.invoiceId === selectedId ? ' row-selected' : ''}`}
-                >
-                  <div className="title-row">
-                    <strong>{invoice.customerName || 'Customer'}</strong>
-                    <span className="badge badge-bad">{invoice.daysOverdue}d</span>
+              {invoices.map((invoice) => {
+                const open = invoice.invoiceId === selectedId;
+                return (
+                  <div
+                    key={invoice.invoiceId}
+                    className={`card doc-card${open ? ' row-selected' : ''}`}
+                  >
+                    <div className="title-row">
+                      <strong>{invoice.customerName || 'Customer'}</strong>
+                      <span className="badge badge-bad">{invoice.daysOverdue}d</span>
+                    </div>
+                    <p>{invoice.invoiceNumber || '—'} · due {displayDate(invoice.dueDate)}</p>
+                    <p className="subtext">{formatRupiah(invoice.balance)}</p>
+                    <div className="actions followup-card-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => pick(invoice)}
+                      >
+                        Message
+                      </button>
+                    </div>
+                    {open && (
+                      <div id={`followup-inline-${invoice.invoiceId}`} className="followup-inline">
+                        <h3>WhatsApp message</h3>
+                        <MessageDraft
+                          selected={invoice}
+                          message={message}
+                          note={note}
+                          onMessageChange={setMessage}
+                          onCopy={copyMessage}
+                        />
+                      </div>
+                    )}
                   </div>
-                  <p>{invoice.invoiceNumber || '—'} · due {displayDate(invoice.dueDate)}</p>
-                  <p className="subtext">{formatRupiah(invoice.balance)}</p>
-                  <div className="actions followup-card-actions">
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={() => pick(invoice)}
-                    >
-                      Message
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
-          <section id="followup-message" className="card followup-message">
+          <section className="card followup-message">
             <h2>WhatsApp message</h2>
-            {selected ? (
-              <>
-                <p className="hint">
-                  {selected.customerName || 'Customer'} · {selected.invoiceNumber || '—'} · {formatRupiah(selected.balance)}
-                </p>
-                <label className="field">
-                  <span className="field-label">Custom message</span>
-                  <textarea
-                    rows={8}
-                    value={message}
-                    onChange={(event) => setMessage(event.target.value)}
-                  />
-                </label>
-                <p className="hint">Draft only. Send from WhatsApp yourself.</p>
-                {note && <p className="message message-ok">{note}</p>}
-                <div className="actions">
-                  <button type="button" className="btn btn-secondary" onClick={copyMessage}>Copy</button>
-                  <a
-                    className="btn btn-primary"
-                    href={whatsappUrl(selected.customerPhone, message)}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open WhatsApp
-                  </a>
-                </div>
-              </>
-            ) : (
-              <p className="muted">Select a customer from the list.</p>
-            )}
+            <MessageDraft
+              selected={selected}
+              message={message}
+              note={note}
+              onMessageChange={setMessage}
+              onCopy={copyMessage}
+            />
           </section>
         </div>
       )}
