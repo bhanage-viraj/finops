@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 const LINKS = [
   ['/', 'Overview'],
   ['/documents', 'Documents'],
+  ['/follow-up', 'Follow-up'],
 ];
 
 export default function Sidebar() {

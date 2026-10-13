@@ -47,21 +47,24 @@ Open Payments at http://localhost:5173/payments. Upload a bank screenshot. The m
 
 Sample invoices, including three open PT Tigris Inovatif Solusi amounts, are fixtures loaded by `npm run seed`. They are not extracted from a screenshot in advance.
 
-## Zoho Books expenses
+## Zoho Books
 
-The only Zoho call is creating an expense from an approved fuel receipt, supplier receipt, supplier invoice, or expense receipt. Approving a document does not send it. Purchase orders, work orders, and unknown documents cannot be sent. Invoices, bills, contacts, and bank transactions are not implemented. Payment confirmation still updates this app only.
+Two Zoho calls are allowed:
 
-The document preview stays simulated. `server/src/services/accounting/` does not call Zoho.
+1. **Create expense** from an approved fuel receipt, supplier receipt, supplier invoice, or expense receipt (with photo). Approving does not send. Purchase orders and work orders are not sent.
+2. **Read overdue invoices** for the Follow-up page (`GET` invoices with status overdue only). FinOps does not write, update, or delete invoices.
 
-Set these in `.env`. Use placeholders in git, never real values. `ZOHO_DC` must match the Zoho site: `books.zoho.com` uses `com`, `books.zoho.in` uses `in`, and the same pattern applies to eu, au, jp, ca, sa, and ae. Copy the organization id from Zoho Books (Manage Organizations). The Zoho organization must use Indonesian rupiah, because the amount sent is a whole number of rupiah.
+Bills, contacts, bank transactions, and other Zoho modules are not called.
 
-Expense accounts are saved on Overview, one row per Zoho account. A petrol account matches the car number on the fuel receipt, including a Zoho name such as `PETROL DK 8094 HF`. Freelance and supplier accounts match the supplier or description. The payment method picks the paid-through account, and `default` is used when the method is blank or not listed. Copy each numeric id from the Zoho chart of accounts. This app does not look them up. If the car or name matches more than one account, or none, the accountant chooses the account on that receipt before it can be sent.
+Set these in `.env`. Use placeholders in git, never real values. `ZOHO_DC` must match the Zoho site: `books.zoho.com` uses `com`, `books.zoho.in` uses `in`, and the same pattern applies to eu, au, jp, ca, sa, and ae. Copy the organization id from Zoho Books (Manage Organizations). The Zoho organization must use Indonesian rupiah.
 
-The Zoho client is a Server-based Application. Homepage URL `http://localhost:4000`. Authorized redirect URI `http://localhost:4000/auth/zoho/callback`.
+The Zoho client is a Server-based Application. Production homepage `https://finops-jaan.onrender.com`. Authorized redirect URI `https://finops-jaan.onrender.com/auth/zoho/callback`.
 
-Restart the API after editing `.env`. Sign in as an admin, open Overview, and choose Connect Zoho. The consent screen asks only for `ZohoBooks.expenses.CREATE`. Connecting does not turn export on. Choose Turn expense export on when you want accountants to send. While that switch is off, the send route refuses and nothing is posted.
+Sign in as an admin, open Overview, and choose **Connect Zoho**. The consent screen asks for `ZohoBooks.expenses.CREATE` and `ZohoBooks.invoices.READ`. After any scope change, connect again. Connecting does not turn export on. Choose **Turn expense export on** when you want Send expense and Follow-up to work. While that switch is off, those routes refuse.
 
-An accountant then opens an approved receipt and chooses Send expense to Zoho. The supplier name is the description, the confirmed date is the expense date, and the confirmed total is the amount. The original JPEG, PNG, or PDF is attached on that same request. WebP is created without a file. The Zoho expense id is stored on the document. A second click does not post again.
+**Follow-up** lists overdue invoices from Zoho, most urgent first (days overdue, then balance). Open a row to edit a WhatsApp reminder, then Copy or Open WhatsApp. Staff send the message themselves. Nothing is written back to Zoho.
+
+An accountant opens an approved receipt and chooses Send expense and photo to Zoho. The Zoho expense id is stored on the document. A second click does not post again.
 
 ## Scripts
 

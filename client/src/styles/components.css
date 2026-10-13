@@ -164,6 +164,26 @@ th {
 }
 td { padding: 10px 8px; border-top: 1px solid var(--border); }
 .num { text-align: right; }
+.row-selected { background: var(--accent-soft); }
+tr.row-selected { cursor: pointer; }
+tr[role="button"] { cursor: pointer; }
+.field textarea {
+  width: 100%;
+  min-height: 160px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  padding: var(--space-3);
+  background: var(--surface);
+  font: inherit;
+  resize: vertical;
+}
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
 
 .dropzone {
   display: grid;

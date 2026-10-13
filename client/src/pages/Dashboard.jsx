@@ -82,7 +82,10 @@ function ZohoConnect() {
   return (
     <section className="card">
       <h2>Zoho Books</h2>
-      <p className="hint">Connect once, then turn export on. Approving a receipt still does not send it.</p>
+      <p className="hint">
+        Connect once (expense create and overdue invoice read), then turn export on.
+        After a scope change, choose Connect Zoho again. Approving a receipt still does not send it.
+      </p>
       {settings && (
         <>
           <p className={connected ? 'message message-ok' : 'message message-warn'}>

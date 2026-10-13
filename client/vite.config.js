@@ -22,6 +22,12 @@ export default defineConfig(({ mode }) => {
             if (req.headers.accept?.includes('text/html')) return '/index.html';
           },
         },
+        '/follow-up': {
+          target: `http://localhost:${apiPort}`,
+          bypass(req) {
+            if (req.headers.accept?.includes('text/html')) return '/index.html';
+          },
+        },
         '/admin': `http://localhost:${apiPort}`,
       },
     },

@@ -11,6 +11,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { createAdminRouter } from './routes/admin.routes.js';
 import { createAuthRouter } from './routes/auth.routes.js';
 import { createDocumentRouter } from './routes/documents.routes.js';
+import { createFollowUpRouter } from './routes/followUp.routes.js';
 
 const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
 
@@ -34,7 +35,8 @@ export function createApp(env, options = {}) {
       if (wantsHtmlPage(req)) return next();
       const apiPath = req.path.startsWith('/auth')
         || req.path.startsWith('/admin')
-        || req.path.startsWith('/documents');
+        || req.path.startsWith('/documents')
+        || req.path.startsWith('/follow-up');
       if (apiPath && databaseStatus() !== 'connected') {
         res.status(503).json({ error: 'The database is not connected, so this action cannot be saved.' });
         return;
@@ -76,16 +78,25 @@ export function createApp(env, options = {}) {
   app.use('/auth', createAuthRouter(env));
   app.use('/admin', createAdminRouter(env));
 
-  // Browser refresh of /documents/:id asks for HTML. Serve the site, not the API JSON.
+  // Browser refresh of app routes asks for HTML. Serve the site, not the API JSON.
   if (fs.existsSync(clientDist)) {
     app.use((req, res, next) => {
       if (!wantsHtmlPage(req)) return next();
-      if (!(req.path === '/documents' || req.path.startsWith('/documents/'))) return next();
-      sendSpa(res);
+      if (
+        req.path === '/documents'
+        || req.path.startsWith('/documents/')
+        || req.path === '/follow-up'
+        || req.path.startsWith('/follow-up/')
+      ) {
+        sendSpa(res);
+        return;
+      }
+      next();
     });
   }
 
   app.use('/documents', createDocumentRouter(env));
+  app.use('/follow-up', createFollowUpRouter(env));
 
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
@@ -94,7 +105,8 @@ export function createApp(env, options = {}) {
       const apiPath = req.path === '/health'
         || req.path.startsWith('/auth')
         || req.path.startsWith('/admin')
-        || req.path.startsWith('/documents');
+        || req.path.startsWith('/documents')
+        || req.path.startsWith('/follow-up');
       if (apiPath) return next();
       sendSpa(res);
     });

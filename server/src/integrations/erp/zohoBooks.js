@@ -1,7 +1,9 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
-/** The only Zoho Books call this app makes is POST /books/v3/expenses. */
+/** Expense create (write) plus overdue invoice list (read). Nothing else. */
 export const ZOHO_EXPENSE_SCOPE = 'ZohoBooks.expenses.CREATE';
+export const ZOHO_INVOICE_READ_SCOPE = 'ZohoBooks.invoices.READ';
+export const ZOHO_OAUTH_SCOPE = `${ZOHO_EXPENSE_SCOPE},${ZOHO_INVOICE_READ_SCOPE}`;
 
 const DATA_CENTERS = {
   com: { accounts: 'https://accounts.zoho.com', api: 'https://www.zohoapis.com' },
@@ -78,7 +80,7 @@ export function verifyOauthState(state, secret) {
 export function authorizationUrl(zoho, state) {
   const hosts = zohoHosts(zoho.dc);
   const params = new URLSearchParams({
-    scope: ZOHO_EXPENSE_SCOPE,
+    scope: ZOHO_OAUTH_SCOPE,
     client_id: zoho.clientId,
     response_type: 'code',
     access_type: 'offline',
@@ -95,15 +97,22 @@ function zohoFailure(message) {
   return error;
 }
 
-function assertAllowedUrl(url, dc, method) {
+export function assertAllowedUrl(url, dc, method) {
   const hosts = zohoHosts(dc);
   const parsed = new URL(url);
   const accountsHost = new URL(hosts.accounts).host;
   const apiHost = new URL(hosts.api).host;
-  const tokenCall = parsed.host === accountsHost && parsed.pathname === '/oauth/v2/token';
-  const expenseCall = parsed.host === apiHost && parsed.pathname === '/books/v3/expenses';
-  if (method !== 'POST' || (!tokenCall && !expenseCall)) {
-    throw zohoFailure('This Zoho integration can only create an expense.');
+  const tokenCall = method === 'POST'
+    && parsed.host === accountsHost
+    && parsed.pathname === '/oauth/v2/token';
+  const expenseCall = method === 'POST'
+    && parsed.host === apiHost
+    && parsed.pathname === '/books/v3/expenses';
+  const invoiceList = method === 'GET'
+    && parsed.host === apiHost
+    && parsed.pathname === '/books/v3/invoices';
+  if (!tokenCall && !expenseCall && !invoiceList) {
+    throw zohoFailure('This Zoho integration can only create an expense or list overdue invoices.');
   }
 }
 
@@ -163,11 +172,57 @@ function expenseIdFrom(text) {
   return bare ? bare[1] : '';
 }
 
-function zohoMessage(text, status) {
+function zohoMessage(text, status, kind = 'expense') {
   const match = text.match(/"message"\s*:\s*"((?:\\.|[^"\\])*)"/);
   const message = match ? match[1].replace(/\\"/g, '"').slice(0, 300) : '';
   if (message && !/token|secret|refresh/i.test(message)) return message;
-  return `Zoho Books refused the expense (HTTP ${status}).`;
+  return kind === 'invoice'
+    ? `Zoho Books refused the invoice list (HTTP ${status}).`
+    : `Zoho Books refused the expense (HTTP ${status}).`;
+}
+
+function invoiceIdFrom(raw) {
+  const text = raw == null ? '' : String(raw);
+  return /^\d+$/.test(text) ? text : '';
+}
+
+/** Map one Zoho invoice row. Skip rows that are not overdue rupiah balances. */
+export function mapOverdueInvoice(row, today = new Date()) {
+  if (!row || typeof row !== 'object') return null;
+  const invoiceId = invoiceIdFrom(row.invoice_id);
+  if (!invoiceId) return null;
+  const status = String(row.status || '').toLowerCase();
+  const dueDate = String(row.due_date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return null;
+  const todayIso = today.toISOString().slice(0, 10);
+  const overdueByStatus = status === 'overdue';
+  const overdueByDate = dueDate < todayIso && !['paid', 'void', 'draft'].includes(status);
+  if (!overdueByStatus && !overdueByDate) return null;
+  const currency = String(row.currency_code || row.currency_symbol || 'IDR').toUpperCase();
+  if (currency && currency !== 'IDR' && currency !== 'RP') return null;
+  const balanceRaw = row.balance ?? row.total;
+  const balanceNum = Number(balanceRaw);
+  if (!Number.isFinite(balanceNum) || balanceNum <= 0) return null;
+  const balance = Math.round(balanceNum);
+  if (Math.abs(balanceNum - balance) > 0.01) return null;
+  const due = Date.UTC(
+    Number(dueDate.slice(0, 4)),
+    Number(dueDate.slice(5, 7)) - 1,
+    Number(dueDate.slice(8, 10)),
+  );
+  const now = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const daysOverdue = Math.max(0, Math.floor((now - due) / 86_400_000));
+  const phone = String(row.customer_phone || row.phone || '').replace(/\D/g, '');
+  return {
+    invoiceId,
+    invoiceNumber: String(row.invoice_number || '').slice(0, 80),
+    customerName: String(row.customer_name || '').slice(0, 120),
+    customerPhone: phone.slice(0, 20),
+    dueDate,
+    daysOverdue,
+    balance,
+    currency: 'IDR',
+  };
 }
 
 function receiptFileName(originalName, ext) {
@@ -223,4 +278,46 @@ export async function createExpense({ zoho, refreshToken, expense, file, fetchIm
   const expenseId = expenseIdFrom(text);
   if (!/^\d+$/.test(expenseId)) throw zohoFailure('Zoho Books did not return an expense id.');
   return { expenseId, receiptAttached: Boolean(file?.bytes?.length) };
+}
+
+export async function listOverdueInvoices({ zoho, refreshToken, fetchImpl = fetch, today = new Date() }) {
+  const hosts = zohoHosts(zoho.dc);
+  const organizationId = String(zoho.organizationId || '');
+  if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
+  const token = await accessToken(zoho, refreshToken, fetchImpl);
+  const invoices = [];
+  let page = 1;
+  let hasMore = true;
+  while (hasMore && page <= 20) {
+    const url = `${hosts.api}/books/v3/invoices?organization_id=${organizationId}&status=overdue&page=${page}&per_page=200`;
+    assertAllowedUrl(url, zoho.dc, 'GET');
+    const response = await fetchImpl(url, {
+      method: 'GET',
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+    });
+    const text = await response.text();
+    const codeMatch = text.match(/"code"\s*:\s*(-?\d+)/);
+    const code = codeMatch ? Number(codeMatch[1]) : null;
+    if (!response.ok || (code !== null && code !== 0)) {
+      throw zohoFailure(zohoMessage(text, response.status, 'invoice'));
+    }
+    let data = {};
+    try { data = JSON.parse(text); } catch { data = {}; }
+    const rows = Array.isArray(data.invoices) ? data.invoices : [];
+    for (const row of rows) {
+      // Keep long ids as strings even when JSON.parse made them numbers.
+      if (row && row.invoice_id != null && typeof row.invoice_id !== 'string') {
+        const idMatch = text.match(new RegExp(`"invoice_id"\\s*:\\s*"?(${String(row.invoice_id)})"?`));
+        if (idMatch) row.invoice_id = idMatch[1];
+        else row.invoice_id = String(row.invoice_id);
+      }
+      const mapped = mapOverdueInvoice(row, today);
+      if (mapped) invoices.push(mapped);
+    }
+    const pageContext = data.page_context || {};
+    hasMore = pageContext.has_more_page === true || pageContext.has_more_page === 'true';
+    page += 1;
+    if (rows.length === 0) hasMore = false;
+  }
+  return invoices;
 }

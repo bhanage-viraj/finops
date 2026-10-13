@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
-  authorizationUrl, clearZohoTokenCache, createExpense, createOauthState, exchangeAuthCode,
-  missingZohoConfig, receiptExtension, verifyOauthState, ZOHO_EXPENSE_SCOPE,
+  assertAllowedUrl, authorizationUrl, clearZohoTokenCache, createExpense, createOauthState,
+  exchangeAuthCode, listOverdueInvoices, mapOverdueInvoice, missingZohoConfig, receiptExtension,
+  verifyOauthState, ZOHO_OAUTH_SCOPE,
 } from '../src/integrations/erp/zohoBooks.js';
 import { receiptForZoho } from '../src/services/documents/zohoExpense.js';
 
@@ -31,15 +32,80 @@ function tokenResponse() {
   return { ok: true, status: 200, text: async () => JSON.stringify({ access_token: 'access-1', expires_in: 3600 }) };
 }
 
-test('the connect URL asks only for expense creation', () => {
+test('the connect URL asks for expense create and invoice read only', () => {
   const url = new URL(authorizationUrl(zoho, createOauthState('test-secret')));
   assert.equal(url.host, 'accounts.zoho.in');
   assert.equal(url.pathname, '/oauth/v2/auth');
-  assert.equal(url.searchParams.get('scope'), ZOHO_EXPENSE_SCOPE);
-  assert.equal(url.searchParams.get('scope').includes('invoices'), false);
+  assert.equal(url.searchParams.get('scope'), ZOHO_OAUTH_SCOPE);
+  assert.equal(url.searchParams.get('scope').includes('ZohoBooks.expenses.CREATE'), true);
+  assert.equal(url.searchParams.get('scope').includes('ZohoBooks.invoices.READ'), true);
+  assert.equal(url.searchParams.get('scope').includes('UPDATE'), false);
   assert.equal(url.searchParams.get('access_type'), 'offline');
   assert.equal(url.searchParams.get('prompt'), 'consent');
   assert.equal(url.searchParams.get('redirect_uri'), zoho.redirectUri);
+});
+
+test('Zoho URLs allow expense POST and invoice GET only', () => {
+  assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/expenses', 'in', 'POST'));
+  assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices?status=overdue', 'in', 'GET'));
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices', 'in', 'POST'), /only create an expense or list overdue/);
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/bills', 'in', 'GET'), /only create an expense or list overdue/);
+});
+
+test('overdue invoice rows keep string ids and integer rupiah', () => {
+  const today = new Date('2026-10-13T00:00:00.000Z');
+  const mapped = mapOverdueInvoice({
+    invoice_id: '9820000000000000009',
+    invoice_number: 'INV-9',
+    customer_name: 'Toko Contoh',
+    due_date: '2026-09-01',
+    status: 'overdue',
+    balance: 150000,
+    currency_code: 'IDR',
+  }, today);
+  assert.equal(mapped.invoiceId, '9820000000000000009');
+  assert.equal(mapped.balance, 150000);
+  assert.equal(mapped.daysOverdue, 42);
+  assert.equal(mapOverdueInvoice({
+    invoice_id: '1', invoice_number: 'X', customer_name: 'A', due_date: '2026-09-01',
+    status: 'paid', balance: 1000, currency_code: 'IDR',
+  }, today), null);
+});
+
+test('list overdue invoices calls only the invoices URL', async () => {
+  clearZohoTokenCache();
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method || 'GET' });
+    if (String(url).includes('/oauth/v2/token')) return tokenResponse();
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        code: 0,
+        invoices: [{
+          invoice_id: '982000000561001',
+          invoice_number: 'INV-1',
+          customer_name: 'Pelanggan Satu',
+          due_date: '2026-09-10',
+          status: 'overdue',
+          balance: 75000,
+          currency_code: 'IDR',
+        }],
+        page_context: { has_more_page: false },
+      }),
+    };
+  };
+  const rows = await listOverdueInvoices({
+    zoho,
+    refreshToken: zoho.refreshToken,
+    fetchImpl,
+    today: new Date('2026-10-13T00:00:00.000Z'),
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].invoiceNumber, 'INV-1');
+  assert.equal(calls.some((call) => call.url.includes('/books/v3/invoices') && call.method === 'GET'), true);
+  assert.equal(calls.some((call) => call.url.includes('/books/v3/bills')), false);
 });
 
 test('oauth state expires and rejects a changed signature', () => {

@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import Login from './pages/Login.jsx';
 import DocumentQueue from './pages/documents/DocumentQueue.jsx';
 import DocumentReview from './pages/documents/DocumentReview.jsx';
+import FollowUp from './pages/followUp/FollowUp.jsx';
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="documents" element={<DocumentQueue />} />
         <Route path="documents/:id" element={<DocumentReview />} />
+        <Route path="follow-up" element={<FollowUp />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
