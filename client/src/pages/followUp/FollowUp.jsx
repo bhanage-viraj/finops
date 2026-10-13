@@ -53,6 +53,11 @@ export default function FollowUp() {
     setSelectedId(invoice.invoiceId);
     setMessage(invoice.messageDraft || '');
     setNote('');
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 700px)').matches) {
+      window.requestAnimationFrame(() => {
+        document.getElementById('followup-message')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
   }
 
   async function copyMessage() {
@@ -78,9 +83,10 @@ export default function FollowUp() {
         <p className="card">No overdue invoices to remind today.</p>
       )}
       {invoices.length > 0 && (
-        <div className="review-grid">
+        <div className="review-grid followup-grid">
           <section className="card">
             <h2>Who to remind</h2>
+            <p className="hint followup-tap-hint">Tap a customer to edit their WhatsApp message.</p>
             <div className="table-wrap">
               <table>
                 <thead>
@@ -136,7 +142,7 @@ export default function FollowUp() {
               ))}
             </div>
           </section>
-          <section className="card">
+          <section id="followup-message" className="card followup-message">
             <h2>WhatsApp message</h2>
             {selected ? (
               <>
@@ -146,7 +152,7 @@ export default function FollowUp() {
                 <label className="field">
                   <span className="field-label">Custom message</span>
                   <textarea
-                    rows={10}
+                    rows={8}
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
                   />
