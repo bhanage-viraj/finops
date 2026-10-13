@@ -265,12 +265,6 @@ a.btn {
 
 .review-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr); gap: var(--space-4); }
 .followup-card-actions { margin: var(--space-3) 0 0; }
-.followup-inline {
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-}
-.followup-inline h3 { margin: 0 0 var(--space-2); font-size: 1rem; }
 .followup-groups { display: grid; gap: var(--space-4); }
 .followup-group-head {
   display: flex;
@@ -291,6 +285,34 @@ a.btn {
   font-size: var(--text-table);
   padding-top: var(--space-3);
   padding-bottom: var(--space-3);
+}
+.followup-detail-row td {
+  background: var(--surface);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.followup-panel {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.followup-detail-row .followup-panel {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.followup-panel-head { margin: 0 0 var(--space-2); }
+.followup-panel-head h3 { margin: 0; font-size: 1rem; }
+.followup-preview { margin: 0 0 var(--space-3); }
+.followup-preview-head { margin: 0 0 var(--space-2); }
+.followup-preview-frame {
+  max-height: 280px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.followup-preview-frame iframe {
+  min-height: 220px;
+  height: 280px;
 }
 .viewer-scroll { overflow: auto; max-height: 75vh; background: var(--bg); }
 .viewer-stage { position: relative; }
@@ -333,9 +355,11 @@ a.btn {
     padding-bottom: calc(148px + env(safe-area-inset-bottom));
   }
   .stat-grid, .review-grid, .line-grid { grid-template-columns: 1fr; }
-  .followup-grid { display: flex; flex-direction: column; }
-  .followup-message { display: none; }
   .followup-card-actions .btn { width: 100%; }
+  .followup-preview-frame { max-height: 220px; }
+  .followup-preview-frame iframe { min-height: 180px; height: 220px; }
+  .followup-preview-head .btn,
+  .followup-panel-head .btn { width: auto; }
   .capture-card {
     position: fixed;
     left: 0;
