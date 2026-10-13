@@ -3,8 +3,8 @@ import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
   assertAllowedUrl, authorizationUrl, clearZohoTokenCache, createExpense, createOauthState,
-  exchangeAuthCode, listOverdueInvoices, mapOverdueInvoice, missingZohoConfig, receiptExtension,
-  verifyOauthState, ZOHO_OAUTH_SCOPE,
+  exchangeAuthCode, getInvoicePdf, listOverdueInvoices, mapOverdueInvoice, missingZohoConfig,
+  receiptExtension, verifyOauthState, ZOHO_OAUTH_SCOPE,
 } from '../src/integrations/erp/zohoBooks.js';
 import { receiptForZoho } from '../src/services/documents/zohoExpense.js';
 
@@ -45,11 +45,13 @@ test('the connect URL asks for expense create and invoice read only', () => {
   assert.equal(url.searchParams.get('redirect_uri'), zoho.redirectUri);
 });
 
-test('Zoho URLs allow expense POST and invoice GET only', () => {
+test('Zoho URLs allow expense POST, invoice list GET, and invoice PDF GET only', () => {
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/expenses', 'in', 'POST'));
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices?status=overdue', 'in', 'GET'));
-  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices', 'in', 'POST'), /only create an expense or list overdue/);
-  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/bills', 'in', 'GET'), /only create an expense or list overdue/);
+  assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1&accept=pdf', 'in', 'GET'));
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1', 'in', 'GET'), /invoice PDF/);
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices', 'in', 'POST'), /invoice PDF/);
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/bills', 'in', 'GET'), /invoice PDF/);
 });
 
 test('overdue invoice rows keep string ids and integer rupiah', () => {
@@ -70,6 +72,41 @@ test('overdue invoice rows keep string ids and integer rupiah', () => {
     invoice_id: '1', invoice_number: 'X', customer_name: 'A', due_date: '2026-09-01',
     status: 'paid', balance: 1000, currency_code: 'IDR',
   }, today), null);
+});
+
+test('invoice PDF download calls only that invoice URL', async () => {
+  clearZohoTokenCache();
+  const calls = [];
+  const pdfBytes = Buffer.from('%PDF-1.4 invoice');
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method || 'GET', headers: init?.headers || {} });
+    if (String(url).includes('/oauth/v2/token')) return tokenResponse();
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          if (String(name).toLowerCase() === 'content-type') return 'application/pdf';
+          if (String(name).toLowerCase() === 'content-disposition') return 'attachment; filename="INV-1.pdf"';
+          return null;
+        },
+      },
+      arrayBuffer: async () => pdfBytes,
+      text: async () => '',
+    };
+  };
+  const file = await getInvoicePdf({
+    zoho,
+    refreshToken: zoho.refreshToken,
+    invoiceId: '982000000561001',
+    invoiceNumber: 'INV-1',
+    fetchImpl,
+  });
+  assert.equal(file.fileName, 'INV-1.pdf');
+  assert.equal(file.contentType, 'application/pdf');
+  assert.equal(Buffer.compare(file.bytes, pdfBytes), 0);
+  assert.equal(calls.some((call) => /\/books\/v3\/invoices\/982000000561001\?/.test(call.url) && call.url.includes('accept=pdf')), true);
+  assert.equal(calls.some((call) => call.url.includes('/books/v3/expenses')), false);
 });
 
 test('list overdue invoices calls only the invoices URL', async () => {

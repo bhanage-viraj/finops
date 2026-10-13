@@ -25,10 +25,13 @@ export function draftWhatsAppMessage(invoice) {
   const number = invoice.invoiceNumber || '-';
   const amount = formatRupiahText(invoice.balance);
   const due = formatDueDateId(invoice.dueDate);
+  const link = String(invoice.invoiceUrl || '').trim();
+  const linkLine = link ? `\n\nInvoice: ${link}` : '\n\nInvoice PDF terlampir.';
   return (
     `Halo ${name},\n\n`
     + `Kami ingin mengingatkan invoice ${number} sebesar ${amount} `
-    + `yang jatuh tempo pada ${due} masih belum lunas.\n\n`
+    + `yang jatuh tempo pada ${due} masih belum lunas.`
+    + `${linkLine}\n\n`
     + `Mohon konfirmasi pembayarannya. Terima kasih.`
   );
 }

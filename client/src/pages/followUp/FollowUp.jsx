@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchFollowUpToday } from '../../api/followUp.js';
+import { fetchFollowUpInvoicePdf, fetchFollowUpToday } from '../../api/followUp.js';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 
 function displayDate(iso) {
@@ -15,7 +15,21 @@ function whatsappUrl(phone, text) {
   return `https://wa.me/?text=${q}`;
 }
 
-function MessageDraft({ selected, message, note, onMessageChange, onCopy }) {
+function safeFileName(name, fallback) {
+  const raw = String(name || fallback || 'invoice.pdf').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80);
+  return raw.toLowerCase().endsWith('.pdf') ? raw : `${raw || 'invoice'}.pdf`;
+}
+
+function MessageDraft({
+  selected,
+  message,
+  note,
+  sharing,
+  onMessageChange,
+  onCopy,
+  onShareWhatsApp,
+  onDownloadPdf,
+}) {
   if (!selected) {
     return <p className="muted">Select a customer from the list.</p>;
   }
@@ -32,18 +46,18 @@ function MessageDraft({ selected, message, note, onMessageChange, onCopy }) {
           onChange={(event) => onMessageChange(event.target.value)}
         />
       </label>
-      <p className="hint">Draft only. Send from WhatsApp yourself.</p>
-      {note && <p className="message message-ok">{note}</p>}
+      <p className="hint">
+        Draft only. Share pulls the invoice PDF from Zoho and opens WhatsApp with the file when your phone allows it.
+      </p>
+      {note && <p className={`message ${note.startsWith('Share failed') || note.startsWith('Download failed') || note.startsWith('Copy failed') ? 'message-bad' : 'message-ok'}`}>{note}</p>}
       <div className="actions">
-        <button type="button" className="btn btn-secondary" onClick={onCopy}>Copy</button>
-        <a
-          className="btn btn-primary"
-          href={whatsappUrl(selected.customerPhone, message)}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Open WhatsApp
-        </a>
+        <button type="button" className="btn btn-secondary" onClick={onCopy} disabled={sharing}>Copy text</button>
+        <button type="button" className="btn btn-secondary" onClick={onDownloadPdf} disabled={sharing}>
+          {sharing ? 'Getting PDF…' : 'Download PDF'}
+        </button>
+        <button type="button" className="btn btn-primary" onClick={onShareWhatsApp} disabled={sharing}>
+          {sharing ? 'Preparing…' : 'Share on WhatsApp'}
+        </button>
       </div>
     </>
   );
@@ -57,6 +71,7 @@ export default function FollowUp() {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(true);
+  const [sharing, setSharing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +112,67 @@ export default function FollowUp() {
       setNote('Message copied.');
     } catch {
       setNote('Copy failed. Select the text and copy it manually.');
+    }
+  }
+
+  async function loadInvoiceFile(invoice) {
+    const { blob } = await fetchFollowUpInvoicePdf(invoice.invoiceId);
+    const fileName = safeFileName(`${invoice.invoiceNumber || invoice.invoiceId}.pdf`);
+    return new File([blob], fileName, { type: 'application/pdf' });
+  }
+
+  function triggerDownload(file) {
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.name;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadPdf() {
+    if (!selected) return;
+    setNote('');
+    setSharing(true);
+    try {
+      const file = await loadInvoiceFile(selected);
+      triggerDownload(file);
+      setNote('Invoice PDF downloaded.');
+    } catch (err) {
+      setNote(err.message || 'Download failed.');
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  async function shareOnWhatsApp() {
+    if (!selected) return;
+    setNote('');
+    setSharing(true);
+    try {
+      const file = await loadInvoiceFile(selected);
+      const canShareFiles = typeof navigator.share === 'function'
+        && (!navigator.canShare || navigator.canShare({ files: [file] }));
+      if (canShareFiles) {
+        await navigator.share({
+          files: [file],
+          text: message,
+          title: selected.invoiceNumber || 'Invoice',
+        });
+        setNote('Share sheet opened. Choose WhatsApp to send the invoice PDF.');
+        return;
+      }
+      triggerDownload(file);
+      window.open(whatsappUrl(selected.customerPhone, message), '_blank', 'noopener,noreferrer');
+      setNote('PDF downloaded. Attach that file in WhatsApp after the chat opens.');
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        setNote('');
+        return;
+      }
+      setNote(err.message || 'Share failed.');
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -183,8 +259,11 @@ export default function FollowUp() {
                           selected={invoice}
                           message={message}
                           note={note}
+                          sharing={sharing}
                           onMessageChange={setMessage}
                           onCopy={copyMessage}
+                          onShareWhatsApp={shareOnWhatsApp}
+                          onDownloadPdf={downloadPdf}
                         />
                       </div>
                     )}
@@ -199,8 +278,11 @@ export default function FollowUp() {
               selected={selected}
               message={message}
               note={note}
+              sharing={sharing}
               onMessageChange={setMessage}
               onCopy={copyMessage}
+              onShareWhatsApp={shareOnWhatsApp}
+              onDownloadPdf={downloadPdf}
             />
           </section>
         </div>

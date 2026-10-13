@@ -62,7 +62,7 @@ The Zoho client is a Server-based Application. Production homepage `https://fino
 
 Sign in as an admin, open Overview, and choose **Connect Zoho**. The consent screen asks for `ZohoBooks.expenses.CREATE` and `ZohoBooks.invoices.READ`. After any scope change, connect again. Connecting does not turn export on. Choose **Turn expense export on** when you want Send expense and Follow-up to work. While that switch is off, those routes refuse.
 
-**Follow-up** lists overdue invoices from Zoho, most urgent first (days overdue, then balance). Open a row to edit a WhatsApp reminder, then Copy or Open WhatsApp. Staff send the message themselves. Nothing is written back to Zoho.
+**Follow-up** lists overdue invoices from Zoho, most urgent first (days overdue, then balance). Open a row to edit a WhatsApp reminder, then **Share on WhatsApp** (pulls the invoice PDF from Zoho and attaches it when the phone allows) or Download PDF. Staff send the message themselves. Nothing is written back to Zoho.
 
 An accountant opens an approved receipt and chooses Send expense and photo to Zoho. The Zoho expense id is stored on the document. A second click does not post again.
 

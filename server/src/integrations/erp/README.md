@@ -5,6 +5,7 @@
 - refresh an OAuth token
 - create one expense (`POST /books/v3/expenses`)
 - list overdue invoices (`GET /books/v3/invoices?status=overdue`)
+- download one invoice PDF (`GET /books/v3/invoices/{id}?accept=pdf`)
 
 It does not update or delete invoices, and it does not call bills, contacts, bank transactions, or organizations.
 

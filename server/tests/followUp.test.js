@@ -22,4 +22,17 @@ test('the WhatsApp draft includes invoice and amount', () => {
   assert.match(text, /INV-22/);
   assert.match(text, /250\.000/);
   assert.match(text, /15\/09\/2026/);
+  assert.match(text, /Invoice PDF terlampir/);
+});
+
+test('the WhatsApp draft includes the Zoho invoice link when present', () => {
+  const text = draftWhatsAppMessage({
+    customerName: 'Budi',
+    invoiceNumber: 'INV-22',
+    balance: 250000,
+    dueDate: '2026-09-15',
+    invoiceUrl: 'https://books.zoho.com/portal/x/invoice/abc',
+  });
+  assert.match(text, /https:\/\/books\.zoho\.com\/portal\/x\/invoice\/abc/);
+  assert.doesNotMatch(text, /Invoice PDF terlampir/);
 });

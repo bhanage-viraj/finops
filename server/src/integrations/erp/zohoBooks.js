@@ -111,8 +111,12 @@ export function assertAllowedUrl(url, dc, method) {
   const invoiceList = method === 'GET'
     && parsed.host === apiHost
     && parsed.pathname === '/books/v3/invoices';
-  if (!tokenCall && !expenseCall && !invoiceList) {
-    throw zohoFailure('This Zoho integration can only create an expense or list overdue invoices.');
+  const invoicePdf = method === 'GET'
+    && parsed.host === apiHost
+    && /^\/books\/v3\/invoices\/\d+$/.test(parsed.pathname)
+    && parsed.searchParams.get('accept') === 'pdf';
+  if (!tokenCall && !expenseCall && !invoiceList && !invoicePdf) {
+    throw zohoFailure('This Zoho integration can only create an expense, list overdue invoices, or read an invoice PDF.');
   }
 }
 
@@ -176,9 +180,9 @@ function zohoMessage(text, status, kind = 'expense') {
   const match = text.match(/"message"\s*:\s*"((?:\\.|[^"\\])*)"/);
   const message = match ? match[1].replace(/\\"/g, '"').slice(0, 300) : '';
   if (message && !/token|secret|refresh/i.test(message)) return message;
-  return kind === 'invoice'
-    ? `Zoho Books refused the invoice list (HTTP ${status}).`
-    : `Zoho Books refused the expense (HTTP ${status}).`;
+  if (kind === 'invoice') return `Zoho Books refused the invoice list (HTTP ${status}).`;
+  if (kind === 'invoice-pdf') return `Zoho Books refused the invoice PDF (HTTP ${status}).`;
+  return `Zoho Books refused the expense (HTTP ${status}).`;
 }
 
 function invoiceIdFrom(raw) {
@@ -213,6 +217,8 @@ export function mapOverdueInvoice(row, today = new Date()) {
   const now = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
   const daysOverdue = Math.max(0, Math.floor((now - due) / 86_400_000));
   const phone = String(row.customer_phone || row.phone || '').replace(/\D/g, '');
+  const invoiceUrl = String(row.invoice_url || '').trim();
+  const safeUrl = /^https:\/\//i.test(invoiceUrl) ? invoiceUrl.slice(0, 500) : '';
   return {
     invoiceId,
     invoiceNumber: String(row.invoice_number || '').slice(0, 80),
@@ -222,6 +228,7 @@ export function mapOverdueInvoice(row, today = new Date()) {
     daysOverdue,
     balance,
     currency: 'IDR',
+    invoiceUrl: safeUrl,
   };
 }
 
@@ -320,4 +327,50 @@ export async function listOverdueInvoices({ zoho, refreshToken, fetchImpl = fetc
     if (rows.length === 0) hasMore = false;
   }
   return invoices;
+}
+
+function pdfFileName(headerValue, invoiceNumber, invoiceId) {
+  const match = String(headerValue || '').match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+  if (match) {
+    const raw = decodeURIComponent(match[1].replace(/["']/g, '')).replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80);
+    if (raw) return raw.toLowerCase().endsWith('.pdf') ? raw : `${raw}.pdf`;
+  }
+  const base = String(invoiceNumber || `invoice-${invoiceId}`).replace(/[^A-Za-z0-9._-]/g, '').slice(0, 60);
+  return `${base || `invoice-${invoiceId}`}.pdf`;
+}
+
+/** Read-only: download one invoice PDF from Zoho Books. */
+export async function getInvoicePdf({ zoho, refreshToken, invoiceId, invoiceNumber = '', fetchImpl = fetch }) {
+  const id = invoiceIdFrom(invoiceId);
+  if (!id) throw zohoFailure('The invoice id must be numeric.');
+  const hosts = zohoHosts(zoho.dc);
+  const organizationId = String(zoho.organizationId || '');
+  if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
+  const url = `${hosts.api}/books/v3/invoices/${id}?organization_id=${organizationId}&accept=pdf`;
+  assertAllowedUrl(url, zoho.dc, 'GET');
+  const token = await accessToken(zoho, refreshToken, fetchImpl);
+  const response = await fetchImpl(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      Accept: 'application/pdf',
+    },
+  });
+  const contentType = String(response.headers?.get?.('content-type') || '').toLowerCase();
+  if (!response.ok) {
+    const text = await response.text();
+    throw zohoFailure(zohoMessage(text, response.status, 'invoice-pdf'));
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length) throw zohoFailure('Zoho Books returned an empty invoice PDF.');
+  // Zoho sometimes returns JSON error with 200; refuse non-PDF bodies.
+  if (contentType.includes('json') || (bytes[0] === 0x7b /* { */ && !contentType.includes('pdf'))) {
+    const text = bytes.toString('utf8').slice(0, 400);
+    throw zohoFailure(zohoMessage(text, response.status, 'invoice-pdf'));
+  }
+  return {
+    bytes,
+    fileName: pdfFileName(response.headers?.get?.('content-disposition'), invoiceNumber, id),
+    contentType: contentType.includes('pdf') ? 'application/pdf' : 'application/pdf',
+  };
 }
