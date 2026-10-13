@@ -14,6 +14,16 @@ import { createDocumentRouter } from './routes/documents.routes.js';
 
 const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
 
+function wantsHtmlPage(req) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  const accept = String(req.get('accept') || '');
+  return accept.includes('text/html');
+}
+
+function sendSpa(res) {
+  res.sendFile(path.join(clientDist, 'index.html'));
+}
+
 export function createApp(env, options = {}) {
   const app = express();
   app.set('trust proxy', 1);
@@ -21,6 +31,7 @@ export function createApp(env, options = {}) {
   if (options.requireDatabase) {
     app.use((req, res, next) => {
       if (req.path === '/health') return next();
+      if (wantsHtmlPage(req)) return next();
       const apiPath = req.path.startsWith('/auth')
         || req.path.startsWith('/admin')
         || req.path.startsWith('/documents');
@@ -64,18 +75,28 @@ export function createApp(env, options = {}) {
 
   app.use('/auth', createAuthRouter(env));
   app.use('/admin', createAdminRouter(env));
+
+  // Browser refresh of /documents/:id asks for HTML. Serve the site, not the API JSON.
+  if (fs.existsSync(clientDist)) {
+    app.use((req, res, next) => {
+      if (!wantsHtmlPage(req)) return next();
+      if (!(req.path === '/documents' || req.path.startsWith('/documents/'))) return next();
+      sendSpa(res);
+    });
+  }
+
   app.use('/documents', createDocumentRouter(env));
 
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
     app.use((req, res, next) => {
-      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      if (!wantsHtmlPage(req)) return next();
       const apiPath = req.path === '/health'
         || req.path.startsWith('/auth')
         || req.path.startsWith('/admin')
         || req.path.startsWith('/documents');
       if (apiPath) return next();
-      res.sendFile(path.join(clientDist, 'index.html'));
+      sendSpa(res);
     });
   }
 
