@@ -115,14 +115,16 @@ export const FIELD_CATALOG = {
   ],
 };
 
+// Match the review screen: date and amount only. Zoho accounts are checked
+// separately before Send, not before Approve.
 export const REQUIRED_FIELDS = {
-  fuel_receipt: ['date', 'supplier', 'total'],
-  work_order: ['workDate', 'workerName', 'agreedAmount'],
-  supplier_receipt: ['date', 'supplier', 'total'],
-  supplier_invoice: ['date', 'supplier', 'documentNumber', 'total'],
-  purchase_order: ['date', 'supplier', 'documentNumber', 'total'],
-  expense_receipt: ['date', 'supplier', 'total'],
-  other: ['date', 'supplier', 'total'],
+  fuel_receipt: ['date', 'total'],
+  work_order: ['workDate', 'agreedAmount'],
+  supplier_receipt: ['date', 'total'],
+  supplier_invoice: ['date', 'total'],
+  purchase_order: ['date', 'total'],
+  expense_receipt: ['date', 'total'],
+  other: ['date', 'total'],
   unknown: [],
 };
 

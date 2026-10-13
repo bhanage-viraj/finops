@@ -20,15 +20,24 @@ test('fuel arithmetic that matches does not invent a new total', () => {
   assert.equal(confirmed.fields.total.normalized, 100310);
 });
 
-test('a large line mismatch is critical and leaves the total untouched', () => {
+test('a large line mismatch is a warning and leaves the total untouched', () => {
   const confirmed = normalizeExtraction('supplier_receipt', {
     fields: { date: '02/10/2026', supplier: 'Toko Surya', total: 'Rp 50.000' },
     lineItems: [{ description: 'Galon', quantity: '2', unit: 'pcs', unitPrice: 'Rp 20.000', lineTotal: 'Rp 50.000' }],
   });
   const result = validateDocument(confirmed);
-  assert.equal(result.canApprove, false);
-  assert.equal(result.critical.some((item) => item.code === 'arithmetic'), true);
+  assert.equal(result.canApprove, true);
+  assert.equal(result.warnings.some((item) => item.code === 'arithmetic'), true);
   assert.equal(confirmed.fields.total.normalized, 50000);
+});
+
+test('date and amount alone are enough to approve a fuel receipt', () => {
+  const confirmed = normalizeExtraction('fuel_receipt', {
+    fields: { date: '04/08/2026', total: 'Rp 250.000' },
+    lineItems: [],
+  });
+  const result = validateDocument(confirmed);
+  assert.equal(result.canApprove, true);
 });
 
 test('unknown type blocks approval', () => {

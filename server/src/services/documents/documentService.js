@@ -292,7 +292,8 @@ export async function approveDocument(id, user) {
   }
   doc.validation = currentValidation(doc);
   if (!doc.validation.canApprove) {
-    const error = httpError(400, 'Approval is blocked until the required fields and critical checks are resolved.');
+    const detail = doc.validation.critical.map((item) => item.message).filter(Boolean).join(' ');
+    const error = httpError(400, detail || 'Approval is blocked until the required fields and critical checks are resolved.');
     error.issues = doc.validation.critical;
     throw error;
   }

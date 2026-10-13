@@ -64,7 +64,8 @@ export function validateDocument(confirmed, { duplicate = null } = {}) {
     if (diff <= 2) {
       issues.push(issue('warning', field, 'rounding', `Line ${index + 1} is ${diff} rupiah away from quantity times price. The total was not changed.`));
     } else {
-      issues.push(issue('critical', field, 'arithmetic', `Line ${index + 1} does not match quantity times price (expected ${expected}, document says ${actual}). The total was not changed.`));
+      // Warning only: the review screen edits the total for Zoho, not line math.
+      issues.push(issue('warning', field, 'arithmetic', `Line ${index + 1} does not match quantity times price (expected ${expected}, document says ${actual}). Check the total before sending.`));
     }
     lineSum += actual;
     summed = true;
@@ -78,14 +79,14 @@ export function validateDocument(confirmed, { duplicate = null } = {}) {
     const expected = subtotal - discount + tax;
     const diff = Math.abs(expected - total);
     if (diff > 2) {
-      issues.push(issue('critical', 'total', 'total_mismatch', `Subtotal, discount and tax do not reach the total (expected ${expected}, document says ${total}). The total was not changed.`));
+      issues.push(issue('warning', 'total', 'total_mismatch', `Subtotal, discount and tax do not reach the total (expected ${expected}, document says ${total}). Check the amount before sending.`));
     } else if (diff > 0) {
       issues.push(issue('warning', 'total', 'rounding', `The total is ${diff} rupiah away from subtotal, discount and tax. The total was not changed.`));
     }
   } else if (summed && total != null) {
     const diff = Math.abs(lineSum - total);
     if (diff > 2) {
-      issues.push(issue('critical', 'total', 'lines_mismatch', `The line totals add up to ${lineSum}, and the document total is ${total}. The total was not changed.`));
+      issues.push(issue('warning', 'total', 'lines_mismatch', `The line totals add up to ${lineSum}, and the document total is ${total}. Check the amount before sending.`));
     } else if (diff > 0) {
       issues.push(issue('warning', 'total', 'rounding', `The line totals are ${diff} rupiah away from the document total. The total was not changed.`));
     }

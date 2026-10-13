@@ -131,6 +131,12 @@ export default function DocumentReview() {
         <p className="message message-warn">Reading the receipt. Stay on this page.</p>
       )}
       {document.failureMessage && <p className="message message-bad">{document.failureMessage}</p>}
+      {(document.validation?.critical || []).map((item) => (
+        <p key={`${item.code}-${item.field}`} className="message message-bad">{item.message}</p>
+      ))}
+      {(document.validation?.warnings || []).slice(0, 3).map((item) => (
+        <p key={`${item.code}-${item.field}`} className="message message-warn">{item.message}</p>
+      ))}
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
       <div className="review-grid">
