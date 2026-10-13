@@ -264,7 +264,7 @@ a.btn {
 .btn { position: relative; }
 
 .review-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr); gap: var(--space-4); }
-.followup-tap-hint { display: none; }
+.followup-card-actions { margin: var(--space-3) 0 0; }
 .viewer-scroll { overflow: auto; max-height: 75vh; background: var(--bg); }
 .viewer-stage { position: relative; }
 .viewer-stage img, .viewer-stage iframe { display: block; width: 100%; min-height: 420px; border: 0; background: white; }
@@ -308,7 +308,7 @@ a.btn {
   .stat-grid, .review-grid, .line-grid { grid-template-columns: 1fr; }
   .followup-grid { display: flex; flex-direction: column; }
   .followup-message { order: -1; }
-  .followup-tap-hint { display: block; }
+  .followup-card-actions .btn { width: 100%; }
   .capture-card {
     position: fixed;
     left: 0;

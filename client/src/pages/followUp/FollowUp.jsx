@@ -86,7 +86,6 @@ export default function FollowUp() {
         <div className="review-grid followup-grid">
           <section className="card">
             <h2>Who to remind</h2>
-            <p className="hint followup-tap-hint">Tap a customer to edit their WhatsApp message.</p>
             <div className="table-wrap">
               <table>
                 <thead>
@@ -96,6 +95,7 @@ export default function FollowUp() {
                     <th>Due</th>
                     <th className="num">Days</th>
                     <th className="num">Balance</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -103,22 +103,21 @@ export default function FollowUp() {
                     <tr
                       key={invoice.invoiceId}
                       className={invoice.invoiceId === selectedId ? 'row-selected' : undefined}
-                      onClick={() => pick(invoice)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          pick(invoice);
-                        }
-                      }}
-                      tabIndex={0}
-                      role="button"
-                      aria-pressed={invoice.invoiceId === selectedId}
                     >
                       <td>{invoice.customerName || '—'}</td>
                       <td>{invoice.invoiceNumber || '—'}</td>
                       <td>{displayDate(invoice.dueDate)}</td>
                       <td className="num">{invoice.daysOverdue}</td>
                       <td className="num">{formatRupiah(invoice.balance)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => pick(invoice)}
+                        >
+                          Message
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -126,11 +125,9 @@ export default function FollowUp() {
             </div>
             <div className="doc-cards">
               {invoices.map((invoice) => (
-                <button
+                <div
                   key={invoice.invoiceId}
-                  type="button"
                   className={`card doc-card${invoice.invoiceId === selectedId ? ' row-selected' : ''}`}
-                  onClick={() => pick(invoice)}
                 >
                   <div className="title-row">
                     <strong>{invoice.customerName || 'Customer'}</strong>
@@ -138,7 +135,16 @@ export default function FollowUp() {
                   </div>
                   <p>{invoice.invoiceNumber || '—'} · due {displayDate(invoice.dueDate)}</p>
                   <p className="subtext">{formatRupiah(invoice.balance)}</p>
-                </button>
+                  <div className="actions followup-card-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => pick(invoice)}
+                    >
+                      Message
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           </section>
