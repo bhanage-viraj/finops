@@ -1,11 +1,31 @@
-/** Most urgent first: days overdue, then balance, then due date, then invoice number. */
+/**
+ * Group by due date: oldest due date first (most overdue groups at the top).
+ * Within the same due date: larger balance first, then invoice number.
+ */
 export function rankOverdueInvoices(invoices) {
   return [...(invoices || [])].sort((a, b) => {
-    if (b.daysOverdue !== a.daysOverdue) return b.daysOverdue - a.daysOverdue;
-    if (b.balance !== a.balance) return b.balance - a.balance;
     if (a.dueDate !== b.dueDate) return a.dueDate < b.dueDate ? -1 : 1;
+    if (b.balance !== a.balance) return b.balance - a.balance;
     return String(a.invoiceNumber || '').localeCompare(String(b.invoiceNumber || ''));
   });
+}
+
+/** Consecutive invoices that share a due date, preserving rankOverdueInvoices order. */
+export function groupOverdueByDueDate(invoices) {
+  const groups = [];
+  for (const invoice of rankOverdueInvoices(invoices)) {
+    const last = groups[groups.length - 1];
+    if (last && last.dueDate === invoice.dueDate) {
+      last.invoices.push(invoice);
+      continue;
+    }
+    groups.push({
+      dueDate: invoice.dueDate,
+      daysOverdue: invoice.daysOverdue,
+      invoices: [invoice],
+    });
+  }
+  return groups;
 }
 
 export function formatRupiahText(amount) {

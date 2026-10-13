@@ -271,6 +271,27 @@ a.btn {
   border-top: 1px solid var(--border);
 }
 .followup-inline h3 { margin: 0 0 var(--space-2); font-size: 1rem; }
+.followup-groups { display: grid; gap: var(--space-4); }
+.followup-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.followup-group-head h3 { margin: 0; font-size: 1rem; }
+.followup-group-cards { display: grid; gap: var(--space-2); }
+.followup-due-cell { font-weight: 600; }
+.followup-group-row td {
+  background: var(--bg);
+  color: var(--muted);
+  font-size: var(--text-table);
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+}
 .viewer-scroll { overflow: auto; max-height: 75vh; background: var(--bg); }
 .viewer-stage { position: relative; }
 .viewer-stage img, .viewer-stage iframe { display: block; width: 100%; min-height: 420px; border: 0; background: white; }

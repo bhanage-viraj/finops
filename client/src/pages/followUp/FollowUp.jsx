@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { fetchFollowUpInvoicePdf, fetchFollowUpToday } from '../../api/followUp.js';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 
@@ -18,6 +18,24 @@ function whatsappUrl(phone, text) {
 function safeFileName(name, fallback) {
   const raw = String(name || fallback || 'invoice.pdf').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80);
   return raw.toLowerCase().endsWith('.pdf') ? raw : `${raw || 'invoice'}.pdf`;
+}
+
+/** API already ranks by due date; chunk consecutive same-day rows for section headers. */
+function groupByDueDate(list) {
+  const groups = [];
+  for (const invoice of list || []) {
+    const last = groups[groups.length - 1];
+    if (last && last.dueDate === invoice.dueDate) {
+      last.invoices.push(invoice);
+      continue;
+    }
+    groups.push({
+      dueDate: invoice.dueDate,
+      daysOverdue: invoice.daysOverdue,
+      invoices: [invoice],
+    });
+  }
+  return groups;
 }
 
 function MessageDraft({
@@ -92,6 +110,7 @@ export default function FollowUp() {
   }, []);
 
   const selected = invoices.find((item) => item.invoiceId === selectedId) || null;
+  const dueGroups = groupByDueDate(invoices);
 
   function pick(invoice) {
     setSelectedId(invoice.invoiceId);
@@ -180,7 +199,7 @@ export default function FollowUp() {
     <>
       <h1>Follow-up</h1>
       <p className="hint">
-        Overdue invoices from Zoho Books, most urgent first. Read only — nothing is written back to Zoho.
+        Overdue invoices from Zoho Books, grouped by due date (oldest due first). Read only — nothing is written back to Zoho.
         {asOf ? ` As of ${displayDate(asOf)}.` : ''}
       </p>
       {error && <p className="message message-bad">{error}</p>}
@@ -205,71 +224,94 @@ export default function FollowUp() {
                   </tr>
                 </thead>
                 <tbody>
-                  {invoices.map((invoice) => (
-                    <tr
-                      key={invoice.invoiceId}
-                      className={invoice.invoiceId === selectedId ? 'row-selected' : undefined}
-                    >
-                      <td>{invoice.customerName || '—'}</td>
-                      <td>{invoice.invoiceNumber || '—'}</td>
-                      <td>{displayDate(invoice.dueDate)}</td>
-                      <td className="num">{invoice.daysOverdue}</td>
-                      <td className="num">{formatRupiah(invoice.balance)}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() => pick(invoice)}
+                  {dueGroups.map((group) => (
+                    <Fragment key={group.dueDate}>
+                      <tr className="followup-group-row">
+                        <td colSpan={6}>
+                          <strong>Due {displayDate(group.dueDate)}</strong>
+                          {' · '}
+                          {group.daysOverdue}d overdue
+                          {' · '}
+                          {group.invoices.length} invoice{group.invoices.length === 1 ? '' : 's'}
+                        </td>
+                      </tr>
+                      {group.invoices.map((invoice) => (
+                        <tr
+                          key={invoice.invoiceId}
+                          className={invoice.invoiceId === selectedId ? 'row-selected' : undefined}
                         >
-                          Message
-                        </button>
-                      </td>
-                    </tr>
+                          <td>{invoice.customerName || '—'}</td>
+                          <td>{invoice.invoiceNumber || '—'}</td>
+                          <td className="followup-due-cell">{displayDate(invoice.dueDate)}</td>
+                          <td className="num">{invoice.daysOverdue}</td>
+                          <td className="num">{formatRupiah(invoice.balance)}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={() => pick(invoice)}
+                            >
+                              Message
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div className="doc-cards">
-              {invoices.map((invoice) => {
-                const open = invoice.invoiceId === selectedId;
-                return (
-                  <div
-                    key={invoice.invoiceId}
-                    className={`card doc-card${open ? ' row-selected' : ''}`}
-                  >
-                    <div className="title-row">
-                      <strong>{invoice.customerName || 'Customer'}</strong>
-                      <span className="badge badge-bad">{invoice.daysOverdue}d</span>
-                    </div>
-                    <p>{invoice.invoiceNumber || '—'} · due {displayDate(invoice.dueDate)}</p>
-                    <p className="subtext">{formatRupiah(invoice.balance)}</p>
-                    <div className="actions followup-card-actions">
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={() => pick(invoice)}
-                      >
-                        Message
-                      </button>
-                    </div>
-                    {open && (
-                      <div id={`followup-inline-${invoice.invoiceId}`} className="followup-inline">
-                        <h3>WhatsApp message</h3>
-                        <MessageDraft
-                          selected={invoice}
-                          message={message}
-                          note={note}
-                          sharing={sharing}
-                          onMessageChange={setMessage}
-                          onCopy={copyMessage}
-                          onShareWhatsApp={shareOnWhatsApp}
-                          onDownloadPdf={downloadPdf}
-                        />
-                      </div>
-                    )}
+            <div className="doc-cards followup-groups">
+              {dueGroups.map((group) => (
+                <div key={group.dueDate} className="followup-group">
+                  <div className="followup-group-head">
+                    <h3>Due {displayDate(group.dueDate)}</h3>
+                    <span className="badge badge-bad">{group.daysOverdue}d · {group.invoices.length}</span>
                   </div>
-                );
-              })}
+                  <div className="followup-group-cards">
+                    {group.invoices.map((invoice) => {
+                      const open = invoice.invoiceId === selectedId;
+                      return (
+                        <div
+                          key={invoice.invoiceId}
+                          className={`card doc-card${open ? ' row-selected' : ''}`}
+                        >
+                          <div className="title-row">
+                            <strong>{invoice.customerName || 'Customer'}</strong>
+                            <span className="badge badge-bad">{invoice.daysOverdue}d</span>
+                          </div>
+                          <p>{invoice.invoiceNumber || '—'} · due {displayDate(invoice.dueDate)}</p>
+                          <p className="subtext">{formatRupiah(invoice.balance)}</p>
+                          <div className="actions followup-card-actions">
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              onClick={() => pick(invoice)}
+                            >
+                              Message
+                            </button>
+                          </div>
+                          {open && (
+                            <div id={`followup-inline-${invoice.invoiceId}`} className="followup-inline">
+                              <h3>WhatsApp message</h3>
+                              <MessageDraft
+                                selected={invoice}
+                                message={message}
+                                note={note}
+                                sharing={sharing}
+                                onMessageChange={setMessage}
+                                onCopy={copyMessage}
+                                onShareWhatsApp={shareOnWhatsApp}
+                                onDownloadPdf={downloadPdf}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
           <section className="card followup-message">
