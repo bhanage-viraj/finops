@@ -43,9 +43,9 @@ A sample you can photograph or upload is generated with `node scripts/makeSample
 
 ## Payment reconciliation
 
-Open Payments at http://localhost:5173/payments. Upload a bank screenshot. The model reads the recipient, the transfer amount and the transaction date, then compares them with open sample invoices and approved expenses. A unique match stays a proposal. An accountant ticks the bank statement check and confirms before that record is marked paid. Pending, failed, uncertain and duplicate screenshots do not change other records. Confirmation updates this application only. Zoho Books is not called.
+Open Payments at http://localhost:5173/payments. Upload a bank transfer screenshot. The model reads the **sender** (payer), amount, time and reference, then suggests an open invoice by name/alias and exact remaining amount. A match is only a proposal. An accountant opens the row to see the screenshot and invoice side by side, ticks the bank statement check, then **Approves**. Only then is the invoice marked paid or partial in this app. Zoho Books is not called.
 
-Sample invoices, including three open PT Tigris Inovatif Solusi amounts, are fixtures loaded by `npm run seed`. They are not extracted from a screenshot in advance.
+Sample customers and invoices (including fake payer Budi Santoso at Rp28.000) load with `npm run seed`. Fake screenshot fixtures live in `samples/screenshots/`.
 
 ## Zoho Books
 

@@ -1,0 +1,13 @@
+{
+  "sender": "Orang Tidak Dikenal",
+  "recipient": "PT Contoh Dagang",
+  "amount": 999999,
+  "paidAt": "2026-09-30T08:00:00.000Z",
+  "reference": "FAKE-REF-NONE",
+  "transferMethod": "BI-FAST",
+  "match": {
+    "invoiceNo": null,
+    "confidence": "low",
+    "type": "none"
+  }
+}

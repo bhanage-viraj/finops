@@ -1,0 +1,11 @@
+{
+  "sender": "Budi Santoso",
+  "recipient": "PT Contoh Dagang",
+  "amount": 28000,
+  "paidAt": "2026-09-30T07:40:00.000Z",
+  "reference": "FAKE-REF-DUP-B",
+  "transferMethod": "BI-FAST",
+  "match": {
+    "flag": "possibleDuplicate"
+  }
+}

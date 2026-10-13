@@ -1,1 +1,0 @@
-Fake bank screenshots for matching tests belong here. Added in M7. Do not put real statements in this folder.

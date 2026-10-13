@@ -1,10 +1,16 @@
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { connectDb, disconnectDb } from '../server/src/config/db.js';
 import { loadEnvFile, readEnv } from '../server/src/config/env.js';
 import Setting from '../server/src/models/Setting.js';
 import User from '../server/src/models/User.js';
 import { writeAudit } from '../server/src/services/audit/auditLogger.js';
+import { importCustomersCsv, importInvoicesCsv } from '../server/src/services/imports/csvImport.js';
 import { hashPassword } from '../server/src/utils/password.js';
+
+const samplesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../samples/erp-exports');
 
 const testUsers = [
   { name: 'Sari Staff', email: 'staff@example.com', role: 'staff', envName: 'SEED_STAFF_PASSWORD' },
@@ -74,12 +80,26 @@ async function seedSettings() {
   console.log('Settings created with erpFeaturesEnabled false.');
 }
 
+async function seedCustomersAndInvoices() {
+  const customersPath = path.join(samplesDir, 'customers.csv');
+  const invoicesPath = path.join(samplesDir, 'invoices.csv');
+  if (!fs.existsSync(customersPath) || !fs.existsSync(invoicesPath)) {
+    console.log('Sample customer/invoice CSVs were not found. Skipping.');
+    return;
+  }
+  const customers = await importCustomersCsv(fs.readFileSync(customersPath, 'utf8'));
+  const invoices = await importInvoicesCsv(fs.readFileSync(invoicesPath, 'utf8'));
+  console.log(`Customers: ${customers.created} created, ${customers.updated} updated.`);
+  console.log(`Invoices: ${invoices.created} created, ${invoices.updated} updated.`);
+}
+
 async function main() {
   loadEnvFile();
   const env = readEnv();
   await connectDb(env.mongodbUri);
   await seedUsers();
   await seedSettings();
+  await seedCustomersAndInvoices();
 }
 
 try {

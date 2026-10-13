@@ -1,0 +1,13 @@
+{
+  "sender": "Budi Santoso",
+  "recipient": "PT Contoh Dagang",
+  "amount": 40000,
+  "paidAt": "2026-09-20T10:00:00.000Z",
+  "reference": "FAKE-REF-PARTIAL",
+  "transferMethod": "BI-FAST",
+  "match": {
+    "invoiceNo": "INV-2026-2011",
+    "confidence": "medium",
+    "type": "partial"
+  }
+}

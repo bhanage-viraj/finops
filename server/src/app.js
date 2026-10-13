@@ -12,6 +12,8 @@ import { createAdminRouter } from './routes/admin.routes.js';
 import { createAuthRouter } from './routes/auth.routes.js';
 import { createDocumentRouter } from './routes/documents.routes.js';
 import { createFollowUpRouter } from './routes/followUp.routes.js';
+import { createImportsRouter } from './routes/imports.routes.js';
+import { createPaymentsRouter } from './routes/payments.routes.js';
 
 const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
 
@@ -36,7 +38,9 @@ export function createApp(env, options = {}) {
       const apiPath = req.path.startsWith('/auth')
         || req.path.startsWith('/admin')
         || req.path.startsWith('/documents')
-        || req.path.startsWith('/follow-up');
+        || req.path.startsWith('/follow-up')
+        || req.path.startsWith('/payments')
+        || req.path.startsWith('/imports');
       if (apiPath && databaseStatus() !== 'connected') {
         res.status(503).json({ error: 'The database is not connected, so this action cannot be saved.' });
         return;
@@ -87,6 +91,8 @@ export function createApp(env, options = {}) {
         || req.path.startsWith('/documents/')
         || req.path === '/follow-up'
         || req.path.startsWith('/follow-up/')
+        || req.path === '/payments'
+        || req.path.startsWith('/payments/')
       ) {
         sendSpa(res);
         return;
@@ -97,6 +103,8 @@ export function createApp(env, options = {}) {
 
   app.use('/documents', createDocumentRouter(env));
   app.use('/follow-up', createFollowUpRouter(env));
+  app.use('/payments', createPaymentsRouter(env));
+  app.use('/imports', createImportsRouter(env));
 
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
@@ -106,7 +114,9 @@ export function createApp(env, options = {}) {
         || req.path.startsWith('/auth')
         || req.path.startsWith('/admin')
         || req.path.startsWith('/documents')
-        || req.path.startsWith('/follow-up');
+        || req.path.startsWith('/follow-up')
+        || req.path.startsWith('/payments')
+        || req.path.startsWith('/imports');
       if (apiPath) return next();
       sendSpa(res);
     });
