@@ -43,24 +43,25 @@ A sample you can photograph or upload is generated with `node scripts/makeSample
 
 ## Payment reconciliation
 
-Open Payments at http://localhost:5173/payments. Upload a bank transfer screenshot. The model reads the **sender** (payer), amount, time and reference, then suggests an open invoice by name/alias and exact remaining amount. A match is only a proposal. An accountant opens the row to see the screenshot and invoice side by side, ticks the bank statement check, then **Approves**. Only then is the invoice marked paid or partial in this app. Zoho Books is not called.
+Open Payments at http://localhost:5173/payments. Upload a bank transfer screenshot. The model reads the **sender** (payer), amount, time and reference, then suggests an unpaid Zoho invoice by customer name and remaining balance. A match is only a proposal. An accountant opens the row (screenshot + invoice side by side), ticks the bank statement check, then **Approves**. Approve records a **customer payment in Zoho Books**, which marks the invoice paid or partially paid there.
 
-Sample customers and invoices (including fake payer Budi Santoso at Rp28.000) load with `npm run seed`. Fake screenshot fixtures live in `samples/screenshots/`.
+This flow is separate from Documents (expenses) and Follow-up (overdue reminders). Set `ZOHO_PAYMENT_DEPOSIT_ACCOUNT_ID` to the Zoho bank account that receives transfers. After deploy, **reconnect Zoho** so the `customerpayments.CREATE` scope is granted, and turn the Overview kill switch on.
 
 ## Zoho Books
 
-Two Zoho calls are allowed:
+Zoho calls allowed:
 
 1. **Create expense** from an approved fuel receipt, supplier receipt, supplier invoice, or expense receipt (with photo). Approving does not send. Purchase orders and work orders are not sent.
-2. **Read overdue invoices** for the Follow-up page (`GET` invoices with status overdue only). FinOps does not write, update, or delete invoices.
+2. **Read overdue invoices** for the Follow-up page (`GET` invoices with status overdue only).
+3. **Payments:** list unpaid invoices and **create a customer payment** against a matched invoice (after statement verify + approve).
 
-Bills, contacts, bank transactions, and other Zoho modules are not called.
+Bills, contacts, and other Zoho modules are not called.
 
 Set these in `.env`. Use placeholders in git, never real values. `ZOHO_DC` must match the Zoho site: `books.zoho.com` uses `com`, `books.zoho.in` uses `in`, and the same pattern applies to eu, au, jp, ca, sa, and ae. Copy the organization id from Zoho Books (Manage Organizations). The Zoho organization must use Indonesian rupiah.
 
 The Zoho client is a Server-based Application. Production homepage `https://finops-jaan.onrender.com`. Authorized redirect URI `https://finops-jaan.onrender.com/auth/zoho/callback`.
 
-Sign in as an admin, open Overview, and choose **Connect Zoho**. The consent screen asks for `ZohoBooks.expenses.CREATE` and `ZohoBooks.invoices.READ`. After any scope change, connect again. Connecting does not turn export on. Choose **Turn expense export on** when you want Send expense and Follow-up to work. While that switch is off, those routes refuse.
+Sign in as an admin, open Overview, and choose **Connect Zoho**. The consent screen asks for `ZohoBooks.expenses.CREATE`, `ZohoBooks.invoices.READ`, and `ZohoBooks.customerpayments.CREATE`. After any scope change, connect again. Connecting does not turn export on. Choose **Turn expense export on** when you want Send expense, Follow-up, and Payments Zoho actions to work. While that switch is off, those routes refuse.
 
 **Follow-up** lists overdue invoices from Zoho, grouped by due date (oldest due date first; within a day, larger balance first). Open a row to edit a WhatsApp reminder, then **Share on WhatsApp** (pulls the invoice PDF from Zoho and attaches it when the phone allows) or Download PDF. Staff send the message themselves. Nothing is written back to Zoho.
 

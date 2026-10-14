@@ -28,15 +28,22 @@ const bankPaymentSchema = new Schema({
     readAt: { type: Date, default: null },
     raw: { type: Schema.Types.Mixed, default: null },
   },
-  // Accountant corrections live here; they never replace ai.
   confirmed: {
     sender: { type: String, default: null },
     amount: integerRupiahField(),
     paidAt: { type: Date, default: null },
-    invoiceId: { type: Schema.Types.ObjectId, ref: 'Invoice', default: null },
   },
-  matchedInvoiceId: { type: Schema.Types.ObjectId, ref: 'Invoice', default: null },
-  matchedCustomerId: { type: Schema.Types.ObjectId, ref: 'Customer', default: null },
+  // Zoho invoice match (Payments is independent of local Mongo invoices).
+  zohoInvoiceId: { type: String, default: '' },
+  zohoCustomerId: { type: String, default: '' },
+  zohoPaymentId: { type: String, default: '' },
+  matchedInvoice: {
+    invoiceNumber: { type: String, default: '' },
+    customerName: { type: String, default: '' },
+    remaining: integerRupiahField(),
+    dueDate: { type: String, default: '' },
+    status: { type: String, default: '' },
+  },
   matchType: {
     type: String,
     enum: ['exact', 'partial', 'over', 'none'],
@@ -48,6 +55,7 @@ const bankPaymentSchema = new Schema({
     default: undefined,
   },
   matchReasons: { type: [String], default: [] },
+  matchCandidates: { type: [Schema.Types.Mixed], default: [] },
   flags: { type: [String], default: [] },
   failureMessage: { type: String, default: '' },
   statementVerified: { type: Boolean, default: false },
@@ -64,5 +72,6 @@ const bankPaymentSchema = new Schema({
 bankPaymentSchema.index({ status: 1 });
 bankPaymentSchema.index({ 'ai.amount': 1, 'ai.paidAt': 1 });
 bankPaymentSchema.index({ uploadedBy: 1 });
+bankPaymentSchema.index({ zohoInvoiceId: 1 });
 
 export default mongoose.model('BankPayment', bankPaymentSchema);

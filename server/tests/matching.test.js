@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bestCustomerNameScore, normalizeName, nameSimilarity } from '../src/services/matching/normalizeName.js';
 import { matchPayment } from '../src/services/matching/matcher.js';
-import Customer from '../src/models/Customer.js';
-import Invoice from '../src/models/Invoice.js';
 import BankPayment from '../src/models/BankPayment.js';
 
 test('normalizeName strips titles and punctuation', () => {
@@ -21,60 +19,44 @@ test('nameSimilarity scores exact and alias-like names high', () => {
 });
 
 test('matcher returns high only for strong name and exact remaining amount', async (t) => {
-  const originalCustomerFind = Customer.find;
-  const originalInvoiceFind = Invoice.find;
   const originalPaymentFind = BankPayment.find;
-
-  const customer = {
-    _id: 'c1',
-    name: 'Budi Santoso',
-    aliases: ['Pak Budi'],
-  };
-  const invoice = {
-    _id: 'inv1',
-    invoiceNo: 'INV-2026-2010',
-    amount: 28000,
-    paidAmount: 0,
-    status: 'open',
-    issueDate: new Date('2026-09-01T00:00:00Z'),
-    dueDate: new Date('2026-09-30T00:00:00Z'),
-    customerId: customer,
-  };
-  const other = {
-    _id: 'inv2',
-    invoiceNo: 'INV-OTHER',
-    amount: 28000,
-    paidAmount: 0,
-    status: 'open',
-    issueDate: new Date('2026-09-01T00:00:00Z'),
-    dueDate: new Date('2026-09-30T00:00:00Z'),
-    customerId: { _id: 'c2', name: 'Toko Lain', aliases: [] },
-  };
-
-  Customer.find = () => ({
-    lean: async () => [customer, other.customerId],
-  });
-  Invoice.find = () => ({
-    populate: () => ({
-      lean: async () => [invoice, other],
-    }),
-  });
   BankPayment.find = () => ({
     select: () => ({
       lean: async () => [],
     }),
   });
+  t.after(() => { BankPayment.find = originalPaymentFind; });
 
-  t.after(() => {
-    Customer.find = originalCustomerFind;
-    Invoice.find = originalInvoiceFind;
-    BankPayment.find = originalPaymentFind;
-  });
+  const invoices = [
+    {
+      invoiceId: 'inv1',
+      invoiceNo: 'INV-2026-2010',
+      customerId: 'c1',
+      customerName: 'Budi Santoso',
+      aliases: ['Pak Budi'],
+      remaining: 28000,
+      dueDate: '2026-09-30',
+      date: '2026-09-01',
+      status: 'overdue',
+    },
+    {
+      invoiceId: 'inv2',
+      invoiceNo: 'INV-OTHER',
+      customerId: 'c2',
+      customerName: 'Toko Lain',
+      aliases: [],
+      remaining: 28000,
+      dueDate: '2026-09-30',
+      date: '2026-09-01',
+      status: 'overdue',
+    },
+  ];
 
   const high = await matchPayment({
     sender: 'Budi Santoso',
     amount: 28000,
     paidAt: new Date('2026-09-30T07:36:00Z'),
+    invoices,
   });
   assert.equal(high.matchConfidence, 'high');
   assert.equal(high.matchType, 'exact');
@@ -84,41 +66,32 @@ test('matcher returns high only for strong name and exact remaining amount', asy
     sender: 'Orang Tidak Dikenal',
     amount: 28000,
     paidAt: new Date('2026-09-30T07:36:00Z'),
+    invoices,
   });
   assert.notEqual(wrongName.matchConfidence, 'high');
   assert.equal(wrongName.matchedInvoiceId, null);
 });
 
 test('partial payment is medium and never high when amount is below remaining', async (t) => {
-  const originalCustomerFind = Customer.find;
-  const originalInvoiceFind = Invoice.find;
   const originalPaymentFind = BankPayment.find;
-
-  const customer = { _id: 'c1', name: 'Budi Santoso', aliases: [] };
-  const invoice = {
-    _id: 'inv-partial',
-    invoiceNo: 'INV-P',
-    amount: 150000,
-    paidAmount: 50000,
-    status: 'partial',
-    issueDate: new Date('2026-09-10T00:00:00Z'),
-    dueDate: new Date('2026-09-25T00:00:00Z'),
-    customerId: customer,
-  };
-
-  Customer.find = () => ({ lean: async () => [customer] });
-  Invoice.find = () => ({ populate: () => ({ lean: async () => [invoice] }) });
   BankPayment.find = () => ({ select: () => ({ lean: async () => [] }) });
-  t.after(() => {
-    Customer.find = originalCustomerFind;
-    Invoice.find = originalInvoiceFind;
-    BankPayment.find = originalPaymentFind;
-  });
+  t.after(() => { BankPayment.find = originalPaymentFind; });
 
   const result = await matchPayment({
     sender: 'Budi Santoso',
     amount: 40000,
     paidAt: new Date('2026-09-20T10:00:00Z'),
+    invoices: [{
+      invoiceId: 'inv-partial',
+      invoiceNo: 'INV-P',
+      customerId: 'c1',
+      customerName: 'Budi Santoso',
+      aliases: [],
+      remaining: 100000,
+      dueDate: '2026-09-25',
+      date: '2026-09-10',
+      status: 'partially_paid',
+    }],
   });
   assert.equal(result.matchType, 'partial');
   assert.equal(result.matchConfidence, 'medium');

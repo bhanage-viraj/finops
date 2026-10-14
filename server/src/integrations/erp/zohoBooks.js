@@ -1,9 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
-/** Expense create (write) plus overdue invoice list (read). Nothing else. */
+/** Expense create, invoice read, and customer payment create (Payments feature). */
 export const ZOHO_EXPENSE_SCOPE = 'ZohoBooks.expenses.CREATE';
 export const ZOHO_INVOICE_READ_SCOPE = 'ZohoBooks.invoices.READ';
-export const ZOHO_OAUTH_SCOPE = `${ZOHO_EXPENSE_SCOPE},${ZOHO_INVOICE_READ_SCOPE}`;
+export const ZOHO_CUSTOMER_PAYMENT_SCOPE = 'ZohoBooks.customerpayments.CREATE';
+export const ZOHO_OAUTH_SCOPE = `${ZOHO_EXPENSE_SCOPE},${ZOHO_INVOICE_READ_SCOPE},${ZOHO_CUSTOMER_PAYMENT_SCOPE}`;
 
 const DATA_CENTERS = {
   com: { accounts: 'https://accounts.zoho.com', api: 'https://www.zohoapis.com' },
@@ -115,8 +116,11 @@ export function assertAllowedUrl(url, dc, method) {
     && parsed.host === apiHost
     && /^\/books\/v3\/invoices\/\d+$/.test(parsed.pathname)
     && parsed.searchParams.get('accept') === 'pdf';
-  if (!tokenCall && !expenseCall && !invoiceList && !invoicePdf) {
-    throw zohoFailure('This Zoho integration can only create an expense, list overdue invoices, or read an invoice PDF.');
+  const customerPayment = method === 'POST'
+    && parsed.host === apiHost
+    && parsed.pathname === '/books/v3/customerpayments';
+  if (!tokenCall && !expenseCall && !invoiceList && !invoicePdf && !customerPayment) {
+    throw zohoFailure('This Zoho integration can only create an expense, list invoices, read an invoice PDF, or record a customer payment.');
   }
 }
 
@@ -182,6 +186,7 @@ function zohoMessage(text, status, kind = 'expense') {
   if (message && !/token|secret|refresh/i.test(message)) return message;
   if (kind === 'invoice') return `Zoho Books refused the invoice list (HTTP ${status}).`;
   if (kind === 'invoice-pdf') return `Zoho Books refused the invoice PDF (HTTP ${status}).`;
+  if (kind === 'payment') return `Zoho Books refused the customer payment (HTTP ${status}).`;
   return `Zoho Books refused the expense (HTTP ${status}).`;
 }
 
@@ -236,6 +241,162 @@ function receiptFileName(originalName, ext) {
   const base = String(originalName || 'receipt').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80);
   if (base.toLowerCase().endsWith(`.${ext}`)) return base || `receipt.${ext}`;
   return `${base || 'receipt'}.${ext}`;
+}
+
+function customerIdFrom(raw) {
+  const text = raw == null ? '' : String(raw);
+  return /^\d+$/.test(text) ? text : '';
+}
+
+function paymentIdFrom(text) {
+  const quoted = text.match(/"payment_id"\s*:\s*"(\d+)"/);
+  if (quoted) return quoted[1];
+  const bare = text.match(/"payment_id"\s*:\s*(\d+)/);
+  return bare ? bare[1] : '';
+}
+
+/**
+ * Unpaid Zoho invoice for payment matching (not the Follow-up overdue-only mapper).
+ * Includes overdue and partially paid balances.
+ */
+export function mapUnpaidInvoiceForMatching(row) {
+  if (!row || typeof row !== 'object') return null;
+  const invoiceId = invoiceIdFrom(row.invoice_id);
+  const customerId = customerIdFrom(row.customer_id);
+  if (!invoiceId || !customerId) return null;
+  const status = String(row.status || '').toLowerCase();
+  if (['paid', 'void', 'draft'].includes(status)) return null;
+  const currency = String(row.currency_code || row.currency_symbol || 'IDR').toUpperCase();
+  if (currency && currency !== 'IDR' && currency !== 'RP') return null;
+  const balanceRaw = row.balance ?? row.total;
+  const balanceNum = Number(balanceRaw);
+  if (!Number.isFinite(balanceNum) || balanceNum <= 0) return null;
+  const balance = Math.round(balanceNum);
+  if (Math.abs(balanceNum - balance) > 0.01) return null;
+  const dueDate = String(row.due_date || '');
+  const date = String(row.date || '');
+  return {
+    invoiceId,
+    invoiceNo: String(row.invoice_number || '').slice(0, 80),
+    invoiceNumber: String(row.invoice_number || '').slice(0, 80),
+    customerId,
+    customerName: String(row.customer_name || '').slice(0, 120),
+    aliases: [],
+    remaining: balance,
+    balance,
+    dueDate: /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : null,
+    date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null,
+    status,
+    currency: 'IDR',
+  };
+}
+
+/** List unpaid Zoho invoices for Payments matching. Separate from Follow-up overdue list. */
+export async function listUnpaidInvoicesForMatching({ zoho, refreshToken, fetchImpl = fetch }) {
+  const hosts = zohoHosts(zoho.dc);
+  const organizationId = String(zoho.organizationId || '');
+  if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
+  const token = await accessToken(zoho, refreshToken, fetchImpl);
+  const invoices = [];
+  let page = 1;
+  let hasMore = true;
+  while (hasMore && page <= 20) {
+    const url = `${hosts.api}/books/v3/invoices?organization_id=${organizationId}&status=unpaid&page=${page}&per_page=200`;
+    assertAllowedUrl(url, zoho.dc, 'GET');
+    const response = await fetchImpl(url, {
+      method: 'GET',
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+    });
+    const text = await response.text();
+    const codeMatch = text.match(/"code"\s*:\s*(-?\d+)/);
+    const code = codeMatch ? Number(codeMatch[1]) : null;
+    if (!response.ok || (code !== null && code !== 0)) {
+      throw zohoFailure(zohoMessage(text, response.status, 'invoice'));
+    }
+    let data = {};
+    try { data = JSON.parse(text); } catch { data = {}; }
+    const rows = Array.isArray(data.invoices) ? data.invoices : [];
+    for (const row of rows) {
+      if (row && row.invoice_id != null && typeof row.invoice_id !== 'string') {
+        row.invoice_id = String(row.invoice_id);
+      }
+      if (row && row.customer_id != null && typeof row.customer_id !== 'string') {
+        row.customer_id = String(row.customer_id);
+      }
+      const mapped = mapUnpaidInvoiceForMatching(row);
+      if (mapped) invoices.push(mapped);
+    }
+    const pageContext = data.page_context || {};
+    hasMore = pageContext.has_more_page === true || pageContext.has_more_page === 'true';
+    page += 1;
+    if (rows.length === 0) hasMore = false;
+  }
+  return invoices;
+}
+
+/**
+ * Record a customer payment against one Zoho invoice.
+ * Zoho marks the invoice paid or partially paid from amount_applied.
+ */
+export async function createCustomerPayment({
+  zoho, refreshToken, payment, fetchImpl = fetch,
+}) {
+  if (!Number.isInteger(payment.amount) || payment.amount <= 0) {
+    throw zohoFailure('The payment amount must be a whole number of rupiah.');
+  }
+  if (!Number.isInteger(payment.amountApplied) || payment.amountApplied <= 0) {
+    throw zohoFailure('The amount applied to the invoice must be a whole number of rupiah.');
+  }
+  if (payment.amountApplied > payment.amount) {
+    throw zohoFailure('Amount applied cannot exceed the payment amount.');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(payment.date || '')) {
+    throw zohoFailure('The payment date must be an ISO date.');
+  }
+  const customerId = customerIdFrom(payment.customerId);
+  const invoiceId = invoiceIdFrom(payment.invoiceId);
+  const accountId = String(payment.accountId || '');
+  if (!customerId) throw zohoFailure('The Zoho customer id must be numeric.');
+  if (!invoiceId) throw zohoFailure('The Zoho invoice id must be numeric.');
+  if (!/^\d+$/.test(accountId)) {
+    throw zohoFailure('Set ZOHO_PAYMENT_DEPOSIT_ACCOUNT_ID to the Zoho bank account that receives transfers.');
+  }
+  const hosts = zohoHosts(zoho.dc);
+  const organizationId = String(zoho.organizationId || '');
+  if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
+  const payload = {
+    customer_id: customerId,
+    payment_mode: String(payment.paymentMode || 'banktransfer').slice(0, 100),
+    amount: payment.amount,
+    date: payment.date,
+    reference_number: String(payment.referenceNumber || '').slice(0, 100),
+    description: String(payment.description || '').slice(0, 200),
+    account_id: accountId,
+    invoices: [{
+      invoice_id: invoiceId,
+      amount_applied: payment.amountApplied,
+    }],
+  };
+  const url = `${hosts.api}/books/v3/customerpayments?organization_id=${organizationId}`;
+  assertAllowedUrl(url, zoho.dc, 'POST');
+  const token = await accessToken(zoho, refreshToken, fetchImpl);
+  const response = await fetchImpl(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const text = await response.text();
+  const codeMatch = text.match(/"code"\s*:\s*(-?\d+)/);
+  const code = codeMatch ? Number(codeMatch[1]) : null;
+  if (!response.ok || (code !== null && code !== 0)) {
+    throw zohoFailure(zohoMessage(text, response.status, 'payment'));
+  }
+  const paymentId = paymentIdFrom(text);
+  if (!/^\d+$/.test(paymentId)) throw zohoFailure('Zoho Books did not return a payment id.');
+  return { paymentId };
 }
 
 export async function createExpense({ zoho, refreshToken, expense, file, fetchImpl = fetch }) {

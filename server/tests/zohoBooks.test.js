@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
-  assertAllowedUrl, authorizationUrl, clearZohoTokenCache, createExpense, createOauthState,
-  exchangeAuthCode, getInvoicePdf, listOverdueInvoices, mapOverdueInvoice, missingZohoConfig,
-  receiptExtension, verifyOauthState, ZOHO_OAUTH_SCOPE,
+  assertAllowedUrl, authorizationUrl, clearZohoTokenCache, createCustomerPayment, createExpense,
+  createOauthState, exchangeAuthCode, getInvoicePdf, listOverdueInvoices,
+  mapOverdueInvoice, mapUnpaidInvoiceForMatching, missingZohoConfig, receiptExtension, verifyOauthState,
+  ZOHO_CUSTOMER_PAYMENT_SCOPE, ZOHO_OAUTH_SCOPE,
 } from '../src/integrations/erp/zohoBooks.js';
 import { receiptForZoho } from '../src/services/documents/zohoExpense.js';
 
@@ -32,26 +33,86 @@ function tokenResponse() {
   return { ok: true, status: 200, text: async () => JSON.stringify({ access_token: 'access-1', expires_in: 3600 }) };
 }
 
-test('the connect URL asks for expense create and invoice read only', () => {
+test('the connect URL asks for expense create, invoice read, and customer payment create', () => {
   const url = new URL(authorizationUrl(zoho, createOauthState('test-secret')));
   assert.equal(url.host, 'accounts.zoho.in');
   assert.equal(url.pathname, '/oauth/v2/auth');
   assert.equal(url.searchParams.get('scope'), ZOHO_OAUTH_SCOPE);
   assert.equal(url.searchParams.get('scope').includes('ZohoBooks.expenses.CREATE'), true);
   assert.equal(url.searchParams.get('scope').includes('ZohoBooks.invoices.READ'), true);
+  assert.equal(url.searchParams.get('scope').includes(ZOHO_CUSTOMER_PAYMENT_SCOPE), true);
   assert.equal(url.searchParams.get('scope').includes('UPDATE'), false);
   assert.equal(url.searchParams.get('access_type'), 'offline');
   assert.equal(url.searchParams.get('prompt'), 'consent');
   assert.equal(url.searchParams.get('redirect_uri'), zoho.redirectUri);
 });
 
-test('Zoho URLs allow expense POST, invoice list GET, and invoice PDF GET only', () => {
+test('Zoho URLs allow expense, invoice list/PDF, and customer payment POST', () => {
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/expenses', 'in', 'POST'));
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices?status=overdue', 'in', 'GET'));
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1&accept=pdf', 'in', 'GET'));
-  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1', 'in', 'GET'), /invoice PDF/);
-  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices', 'in', 'POST'), /invoice PDF/);
-  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/bills', 'in', 'GET'), /invoice PDF/);
+  assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/customerpayments', 'in', 'POST'));
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1', 'in', 'GET'), /customer payment|invoice PDF/);
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices', 'in', 'POST'), /customer payment|invoice PDF/);
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/bills', 'in', 'GET'), /customer payment|invoice PDF/);
+});
+
+test('unpaid invoice mapper keeps customer id and balance for matching', () => {
+  const mapped = mapUnpaidInvoiceForMatching({
+    invoice_id: '9820000000000000009',
+    customer_id: '9820000000000000011',
+    invoice_number: 'INV-9',
+    customer_name: 'Toko Contoh',
+    due_date: '2026-09-01',
+    date: '2026-08-01',
+    status: 'overdue',
+    balance: 150000,
+    currency_code: 'IDR',
+  });
+  assert.equal(mapped.invoiceId, '9820000000000000009');
+  assert.equal(mapped.customerId, '9820000000000000011');
+  assert.equal(mapped.remaining, 150000);
+  assert.equal(mapUnpaidInvoiceForMatching({
+    invoice_id: '1', customer_id: '2', invoice_number: 'X', customer_name: 'A',
+    due_date: '2026-09-01', status: 'paid', balance: 1000, currency_code: 'IDR',
+  }), null);
+});
+
+test('customer payment posts only to customerpayments', async () => {
+  clearZohoTokenCache();
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method, body: options.body });
+    if (String(url).includes('/oauth/v2/token')) return tokenResponse();
+    return {
+      ok: true,
+      status: 201,
+      text: async () => JSON.stringify({ code: 0, payment: { payment_id: '982000000999' } }),
+    };
+  };
+  const result = await createCustomerPayment({
+    zoho,
+    refreshToken: 'refresh-token',
+    payment: {
+      customerId: '982000000001',
+      invoiceId: '982000000002',
+      amount: 28000,
+      amountApplied: 28000,
+      date: '2026-09-30',
+      accountId: '982000000567250',
+      referenceNumber: 'REF-1',
+      description: 'FinOps test',
+    },
+    fetchImpl,
+  });
+  assert.equal(result.paymentId, '982000000999');
+  const paymentCall = calls.find((c) => c.url.includes('/customerpayments'));
+  assert.ok(paymentCall);
+  assert.equal(paymentCall.method, 'POST');
+  const body = JSON.parse(paymentCall.body);
+  assert.equal(body.customer_id, '982000000001');
+  assert.equal(body.invoices[0].invoice_id, '982000000002');
+  assert.equal(body.amount_applied ?? body.invoices[0].amount_applied, 28000);
 });
 
 test('overdue invoice rows keep string ids and integer rupiah', () => {

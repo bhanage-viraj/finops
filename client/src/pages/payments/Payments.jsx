@@ -129,7 +129,7 @@ export default function Payments() {
         }
         await approvePayment(id, payload);
       }
-      setMessage('Approved. Invoice balances updated in this app only — record the payment in the ERP by hand.');
+      setMessage('Approved. Customer payment recorded in Zoho Books.');
       setSelected(new Set());
       load();
     } catch (err) {
@@ -194,7 +194,7 @@ export default function Payments() {
         <div>
           <h1>Payments</h1>
           <p className="hint">
-            Nothing is marked paid until the bank statement is checked and an accountant approves.
+            Matches unpaid Zoho invoices from bank screenshots. Nothing is marked paid in Zoho until the bank statement is checked and an accountant approves.
           </p>
         </div>
         {canReview && (

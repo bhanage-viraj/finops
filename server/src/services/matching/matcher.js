@@ -1,5 +1,3 @@
-import Customer from '../../models/Customer.js';
-import Invoice, { remainingBalance } from '../../models/Invoice.js';
 import BankPayment from '../../models/BankPayment.js';
 import { bestCustomerNameScore } from './normalizeName.js';
 import {
@@ -14,12 +12,14 @@ function daysBetween(a, b) {
 
 function withinDateWindow(invoice, paidAt) {
   if (!paidAt) return true;
-  const issueGap = daysBetween(invoice.issueDate, paidAt);
   const dueGap = daysBetween(invoice.dueDate, paidAt);
+  const issueGap = daysBetween(invoice.issueDate || invoice.date, paidAt);
   const best = Math.min(
-    issueGap == null ? Infinity : issueGap,
     dueGap == null ? Infinity : dueGap,
+    issueGap == null ? Infinity : issueGap,
   );
+  // If no dates on the invoice, still allow a match.
+  if (!Number.isFinite(best)) return true;
   return best <= DATE_WINDOW_DAYS;
 }
 
@@ -30,10 +30,14 @@ function classifyAmount(paymentAmount, remaining) {
 }
 
 /**
- * Suggest an invoice match from AI-extracted payment fields.
+ * Suggest an invoice match from AI fields against an invoice list (usually Zoho unpaid).
  * Never auto-approves or marks paid — returns a suggestion only.
+ *
+ * Each invoice: { invoiceId, invoiceNo, customerId, customerName, aliases?, remaining, dueDate?, date? }
  */
-export async function matchPayment({ sender, amount, paidAt, excludePaymentId = null }) {
+export async function matchPayment({
+  sender, amount, paidAt, invoices = [], excludePaymentId = null,
+}) {
   const reasons = [];
   const flags = [];
 
@@ -46,37 +50,37 @@ export async function matchPayment({ sender, amount, paidAt, excludePaymentId = 
       matchReasons: ['Amount could not be read as integer rupiah.'],
       flags: ['unidentified'],
       candidates: [],
+      matched: null,
     };
   }
 
-  const customers = await Customer.find().lean();
-  const scoredCustomers = customers
-    .map((customer) => ({ customer, score: bestCustomerNameScore(sender, customer) }))
-    .filter((row) => row.score >= WEAK_NAME)
-    .sort((a, b) => b.score - a.score);
-
-  const openInvoices = await Invoice.find({ status: { $in: ['open', 'partial'] } })
-    .populate('customerId')
-    .lean();
+  const openInvoices = (invoices || []).filter((inv) => Number(inv.remaining) > 0);
+  const scoredCustomers = openInvoices
+    .map((inv) => ({
+      name: inv.customerName,
+      aliases: inv.aliases || [],
+      score: bestCustomerNameScore(sender, { name: inv.customerName, aliases: inv.aliases || [] }),
+    }))
+    .filter((row) => row.score >= WEAK_NAME);
 
   const candidates = [];
   for (const invoice of openInvoices) {
-    const customer = invoice.customerId;
-    if (!customer) continue;
+    const customer = { name: invoice.customerName, aliases: invoice.aliases || [] };
     const nameScore = bestCustomerNameScore(sender, customer);
-    const remaining = remainingBalance(invoice);
-    if (remaining <= 0) continue;
+    const remaining = Number(invoice.remaining);
     const amountType = classifyAmount(amount, remaining);
     const dateOk = withinDateWindow(invoice, paidAt);
     candidates.push({
-      invoiceId: invoice._id,
-      invoiceNo: invoice.invoiceNo,
-      customerId: customer._id,
-      customerName: customer.name,
+      invoiceId: invoice.invoiceId,
+      invoiceNo: invoice.invoiceNo || invoice.invoiceNumber,
+      customerId: invoice.customerId,
+      customerName: invoice.customerName,
       remaining,
       amountType,
       nameScore,
       dateOk,
+      dueDate: invoice.dueDate || null,
+      status: invoice.status || '',
     });
   }
 
@@ -142,13 +146,9 @@ export async function matchPayment({ sender, amount, paidAt, excludePaymentId = 
     }
   }
 
-  // Never auto-link low confidence.
   const autoLink = matchConfidence === 'high' || matchConfidence === 'medium';
   if (!autoLink) {
     matched = null;
-    if (matchType === 'none' || matchConfidence === 'low') {
-      matchType = candidates.some((c) => c.amountType === 'exact') ? 'none' : 'none';
-    }
   }
 
   if (paidAt && sender) {
@@ -173,17 +173,21 @@ export async function matchPayment({ sender, amount, paidAt, excludePaymentId = 
   return {
     matchedInvoiceId: matched?.invoiceId || null,
     matchedCustomerId: matched?.customerId || null,
-    matchType: matched ? matchType : (matchType === 'exact' && !matched ? 'none' : matchType),
+    matchType: matched ? matchType : 'none',
     matchConfidence: matched ? matchConfidence : (flags.includes('unidentified') ? 'low' : matchConfidence),
     matchReasons: reasons,
     flags: [...new Set(flags)],
+    matched: matched || null,
     candidates: candidates.slice(0, 8).map((c) => ({
       invoiceId: c.invoiceId,
       invoiceNo: c.invoiceNo,
+      customerId: c.customerId,
       customerName: c.customerName,
       remaining: c.remaining,
       amountType: c.amountType,
       nameScore: Math.round(c.nameScore * 100) / 100,
+      dueDate: c.dueDate,
+      status: c.status,
     })),
   };
 }

@@ -36,7 +36,6 @@ export default function PaymentDetail() {
   const [imageUrl, setImageUrl] = useState('');
   const [invoices, setInvoices] = useState([]);
   const [invoiceId, setInvoiceId] = useState('');
-  const [saveAlias, setSaveAlias] = useState(true);
   const [overReason, setOverReason] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [error, setError] = useState('');
@@ -93,7 +92,7 @@ export default function PaymentDetail() {
       <div className="page-head">
         <div>
           <h1>Payment match</h1>
-          <p className="hint">Screenshot and invoice stay side by side. Paid only after statement check and approve.</p>
+          <p className="hint">Screenshot and Zoho invoice side by side. Approve records the payment in Zoho after the statement check.</p>
         </div>
         <StatusBadge status={payment.status} />
       </div>
@@ -160,17 +159,13 @@ export default function PaymentDetail() {
                   ))}
                 </select>
               </label>
-              <label className="check-row">
-                <input type="checkbox" checked={saveAlias} onChange={(event) => setSaveAlias(event.target.checked)} />
-                Save sender name as customer alias
-              </label>
               <button
                 type="button"
                 className="btn btn-secondary"
                 disabled={busy || !invoiceId}
                 onClick={() => run(async () => {
-                  await matchPayment(id, { invoiceId, saveAlias });
-                  setMessage('Invoice linked. Check the bank statement, then approve to mark paid.');
+                  await matchPayment(id, { invoiceId });
+                  setMessage('Zoho invoice linked. Check the bank statement, then approve to mark paid in Zoho.');
                 })}
               >
                 Save match
@@ -182,7 +177,7 @@ export default function PaymentDetail() {
                 disabled={busy || !payment.matchedInvoiceId || payment.statementVerified}
                 onClick={() => run(async () => {
                   await verifyPayment(id);
-                  setMessage('Statement checked. Approve to mark the invoice paid in this app.');
+                  setMessage('Statement checked. Approve to record the payment in Zoho.');
                 })}
               >
                 Tick bank statement checked
@@ -201,10 +196,10 @@ export default function PaymentDetail() {
                 disabled={busy || payment.status !== 'verified'}
                 onClick={() => run(async () => {
                   await approvePayment(id, { overpaymentReason: overReason });
-                  setMessage('Approved. Invoice updated here only — post it in the ERP by hand.');
+                  setMessage('Approved. Payment recorded in Zoho Books.');
                 })}
               >
-                Approve and mark invoice paid
+                Approve and mark paid in Zoho
               </button>
 
               <label>

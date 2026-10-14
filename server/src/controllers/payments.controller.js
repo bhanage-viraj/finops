@@ -60,9 +60,9 @@ export function file(env) {
   });
 }
 
-export function match() {
+export function match(env) {
   return asyncHandler(async (req, res) => {
-    res.json({ payment: await setPaymentMatch(req.params.id, req.user, req.body || {}) });
+    res.json({ payment: await setPaymentMatch(req.params.id, req.user, req.body || {}, env) });
   });
 }
 
@@ -72,9 +72,9 @@ export function verify() {
   });
 }
 
-export function approve() {
+export function approve(env) {
   return asyncHandler(async (req, res) => {
-    res.json({ payment: await approvePayment(req.params.id, req.user, req.body || {}) });
+    res.json({ payment: await approvePayment(req.params.id, req.user, req.body || {}, env) });
   });
 }
 
@@ -84,8 +84,8 @@ export function reject() {
   });
 }
 
-export function openInvoices() {
+export function openInvoices(env) {
   return asyncHandler(async (req, res) => {
-    res.json({ invoices: await listOpenInvoices(req.query.q || '') });
+    res.json({ invoices: await listOpenInvoices(env, req.query.q || '') });
   });
 }
