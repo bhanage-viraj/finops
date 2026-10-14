@@ -6,7 +6,6 @@ import {
   fetchPayment,
   fetchPaymentFile,
   matchPayment,
-  rejectPayment,
   updatePaymentHints,
   verifyPayment,
 } from '../../api/payments.js';
@@ -39,8 +38,6 @@ export default function PaymentDetail() {
   const [suggestions, setSuggestions] = useState([]);
   const [suggesting, setSuggesting] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [statementChecked, setStatementChecked] = useState(false);
-  const [rejectReason, setRejectReason] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -50,8 +47,7 @@ export default function PaymentDetail() {
     const body = await fetchPayment(id);
     const row = body.payment;
     setPayment(row);
-    setStatementChecked(Boolean(row.statementVerified));
-    setQuery(row.confirmed?.customerName || '');
+    setQuery(row.confirmed?.customerName || row.invoice?.customer?.name || '');
     const file = await fetchPaymentFile(id);
     setImageUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -70,7 +66,7 @@ export default function PaymentDetail() {
   }, [id]);
 
   useEffect(() => {
-    if (!canReview) return undefined;
+    if (!canReview || payment?.status === 'approved') return undefined;
     const q = query.trim();
     if (q.length < 2) {
       setSuggestions([]);
@@ -94,7 +90,7 @@ export default function PaymentDetail() {
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [query, canReview]);
+  }, [query, canReview, payment?.status]);
 
   async function run(action) {
     setBusy(true);
@@ -117,7 +113,6 @@ export default function PaymentDetail() {
     await run(async () => {
       await updatePaymentHints(id, { customerName: row.customerName || '' });
       await matchPayment(id, { invoiceId: row.id });
-      setMessage(`Linked ${row.invoiceNo}`);
     });
   }
 
@@ -150,55 +145,50 @@ export default function PaymentDetail() {
             <div><dt>From bank</dt><dd>{payment.ai?.sender || '—'}</dd></div>
             <div><dt>Amount</dt><dd>{formatRupiah(amount)}</dd></div>
             <div><dt>Time</dt><dd>{formatWhen(payment.ai?.paidAt)}</dd></div>
-            <div><dt>Ref</dt><dd>{payment.ai?.reference || '—'}</dd></div>
           </dl>
         </section>
 
         <section className="card">
           {editable && (
-            <div className="stack-form" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}>
-              <div className="name-suggest">
-                <label>
-                  Find customer
-                  <input
-                    value={query}
-                    onChange={(event) => {
-                      setQuery(event.target.value);
-                      setShowSuggestions(true);
-                    }}
-                    onFocus={() => setShowSuggestions(true)}
-                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                    placeholder="Type a name…"
-                    autoComplete="off"
-                  />
-                </label>
-                {showSuggestions && query.trim().length >= 2 && (
-                  <div>
-                    {suggesting && <p className="hint">Searching…</p>}
-                    {!suggesting && suggestions.length === 0 && (
-                      <p className="hint">No match</p>
-                    )}
-                    {suggestions.length > 0 && (
-                      <ul className="name-suggest-list" role="listbox">
-                        {suggestions.map((row) => (
-                          <li key={row.id}>
-                            <button
-                              type="button"
-                              onMouseDown={(event) => event.preventDefault()}
-                              onClick={() => pickSuggestion(row)}
-                            >
-                              <strong>{row.customerName || '—'}</strong>
-                              <span className="hint">
-                                {row.invoiceNo} · {formatRupiah(row.remaining)}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-              </div>
+            <div className="name-suggest">
+              <label>
+                Find customer
+                <input
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  placeholder="Type a name…"
+                  autoComplete="off"
+                />
+              </label>
+              {showSuggestions && query.trim().length >= 2 && (
+                <div>
+                  {suggesting && <p className="hint">Searching…</p>}
+                  {!suggesting && suggestions.length === 0 && <p className="hint">No match</p>}
+                  {suggestions.length > 0 && (
+                    <ul className="name-suggest-list" role="listbox">
+                      {suggestions.map((row) => (
+                        <li key={row.id}>
+                          <button
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => pickSuggestion(row)}
+                          >
+                            <strong>{row.customerName || '—'}</strong>
+                            <span className="hint">
+                              {row.invoiceNo} · {formatRupiah(row.remaining)}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -208,61 +198,31 @@ export default function PaymentDetail() {
               <div><dt>Customer</dt><dd>{invoice.customer?.name || '—'}</dd></div>
               <div><dt>Due</dt><dd>{formatRupiah(invoice.remaining)}</dd></div>
             </dl>
-          ) : (
-            <p className="hint">Pick a customer above.</p>
-          )}
+          ) : editable ? (
+            <p className="hint">Pick a customer.</p>
+          ) : null}
 
           {editable && (
             <div className="stack-form">
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={statementChecked}
-                  disabled={busy || !payment.matchedInvoiceId}
-                  onChange={(event) => setStatementChecked(event.target.checked)}
-                />
-                Checked on bank statement
-              </label>
-
               <button
                 type="button"
                 className="btn btn-primary"
                 disabled={busy || !payment.matchedInvoiceId}
                 onClick={() => run(async () => {
                   if (!payment.matchedInvoiceId) throw new Error('Pick a customer first.');
-                  if (!statementChecked) throw new Error('Tick the bank statement check first.');
+                  // One click = statement confirmed + Payments Received in Zoho.
                   if (!payment.statementVerified) await verifyPayment(id);
                   await approvePayment(id, {});
                   setMessage('Recorded in Zoho.');
                 })}
               >
-                Record in Zoho
-              </button>
-
-              <label>
-                Reject
-                <input
-                  value={rejectReason}
-                  onChange={(event) => setRejectReason(event.target.value)}
-                  placeholder="Reason"
-                />
-              </label>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={busy || !rejectReason.trim()}
-                onClick={() => run(async () => {
-                  await rejectPayment(id, rejectReason);
-                  setMessage('Rejected.');
-                })}
-              >
-                Reject
+                {busy ? 'Recording…' : 'Record in Zoho'}
               </button>
             </div>
           )}
 
           {payment.status === 'approved' && (
-            <p className="message message-ok">Saved in Zoho Payments Received.</p>
+            <p className="message message-ok">Saved in Zoho.</p>
           )}
         </section>
       </div>
