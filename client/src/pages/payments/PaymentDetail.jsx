@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   approvePayment,
@@ -44,8 +44,9 @@ export default function PaymentDetail() {
   const canReview = user?.role === 'accountant' || user?.role === 'admin';
   const [payment, setPayment] = useState(null);
   const [imageUrl, setImageUrl] = useState('');
-  const [invoices, setInvoices] = useState([]);
-  const [invoiceId, setInvoiceId] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggesting, setSuggesting] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [siteNote, setSiteNote] = useState('');
   const [invoiceHint, setInvoiceHint] = useState('');
@@ -56,12 +57,12 @@ export default function PaymentDetail() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const suggestSeq = useRef(0);
 
   async function load() {
     const body = await fetchPayment(id);
     const row = body.payment;
     setPayment(row);
-    setInvoiceId(row.matchedInvoiceId || '');
     setOverReason(row.overpaymentReason || '');
     setCustomerName(row.confirmed?.customerName || '');
     setSiteNote(row.confirmed?.siteNote || '');
@@ -77,16 +78,41 @@ export default function PaymentDetail() {
 
   useEffect(() => {
     load().catch((err) => setError(err.message));
-    if (canReview) {
-      fetchOpenInvoices().then((body) => setInvoices(body.invoices || [])).catch(() => {});
-    }
     return () => {
       setImageUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return '';
       });
     };
-  }, [id, canReview]);
+  }, [id]);
+
+  // Keyword → unpaid Zoho invoices whose customer name (or invoice #) contains it.
+  useEffect(() => {
+    if (!canReview) return undefined;
+    const q = customerName.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      setSuggesting(false);
+      return undefined;
+    }
+    const seq = ++suggestSeq.current;
+    setSuggesting(true);
+    const timer = setTimeout(() => {
+      fetchOpenInvoices(q)
+        .then((body) => {
+          if (seq !== suggestSeq.current) return;
+          setSuggestions(body.invoices || []);
+        })
+        .catch(() => {
+          if (seq !== suggestSeq.current) return;
+          setSuggestions([]);
+        })
+        .finally(() => {
+          if (seq === suggestSeq.current) setSuggesting(false);
+        });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [customerName, canReview]);
 
   async function run(action) {
     setBusy(true);
@@ -100,6 +126,24 @@ export default function PaymentDetail() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function pickSuggestion(row) {
+    setCustomerName(row.customerName || '');
+    setInvoiceHint(row.invoiceNo || '');
+    setShowSuggestions(false);
+    setSuggestions([]);
+    await run(async () => {
+      await updatePaymentHints(id, {
+        customerName: row.customerName || '',
+        siteNote,
+        invoiceHint: row.invoiceNo || '',
+        paidAt: paidAt || undefined,
+        amount: amount || undefined,
+      });
+      await matchPayment(id, { invoiceId: row.id });
+      setMessage(`Linked ${row.invoiceNo} · ${row.customerName}. Check the bank statement, then Record Payment.`);
+    });
   }
 
   if (!payment && !error) return <p className="hint">Loading…</p>;
@@ -150,14 +194,51 @@ export default function PaymentDetail() {
 
           {editable && (
             <div className="stack-form">
-              <label>
-                Customer name (from caption)
-                <input
-                  value={customerName}
-                  onChange={(event) => setCustomerName(event.target.value)}
-                  placeholder="e.g. Yurike cindy"
-                />
-              </label>
+              <div className="name-suggest">
+                <label>
+                  Customer name (from caption)
+                  <input
+                    value={customerName}
+                    onChange={(event) => {
+                      setCustomerName(event.target.value);
+                      setShowSuggestions(true);
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
+                    onBlur={() => {
+                      // Allow click on a suggestion before closing.
+                      setTimeout(() => setShowSuggestions(false), 150);
+                    }}
+                    placeholder="Type a keyword, e.g. form"
+                    autoComplete="off"
+                  />
+                </label>
+                {showSuggestions && customerName.trim().length >= 2 && (
+                  <div>
+                    {suggesting && <p className="hint">Searching unpaid invoices…</p>}
+                    {!suggesting && suggestions.length === 0 && (
+                      <p className="hint">No unpaid customer or invoice matches that keyword.</p>
+                    )}
+                    {suggestions.length > 0 && (
+                      <ul className="name-suggest-list" role="listbox">
+                        {suggestions.map((row) => (
+                          <li key={row.id}>
+                            <button
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => pickSuggestion(row)}
+                            >
+                              <strong>{row.customerName || '—'}</strong>
+                              <span className="hint">
+                                {row.invoiceNo} · {formatRupiah(row.remaining)} due
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
               <label>
                 Site / note (optional)
                 <input
@@ -225,7 +306,7 @@ export default function PaymentDetail() {
               <div><dt>Due</dt><dd>{formatWhen(invoice.dueDate)}</dd></div>
             </dl>
           ) : (
-            <p className="hint">No invoice linked yet. Paste the caption customer name or pick an unpaid invoice.</p>
+            <p className="hint">No invoice linked yet. Type a customer keyword above to pick an unpaid invoice.</p>
           )}
 
           <div className="match-meta">
@@ -242,29 +323,6 @@ export default function PaymentDetail() {
 
           {editable && (
             <div className="stack-form">
-              <label>
-                Link unpaid invoice
-                <select value={invoiceId} onChange={(event) => setInvoiceId(event.target.value)}>
-                  <option value="">Choose open invoice…</option>
-                  {invoices.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.invoiceNo} · {row.customerName} · {formatRupiah(row.remaining)} due
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={busy || !invoiceId}
-                onClick={() => run(async () => {
-                  await matchPayment(id, { invoiceId });
-                  setMessage('Zoho invoice linked. Check the bank statement, then Record Payment.');
-                })}
-              >
-                Save match
-              </button>
-
               <button
                 type="button"
                 className="btn btn-secondary"

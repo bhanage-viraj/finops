@@ -305,6 +305,41 @@ a.btn {
   border-top: 1px solid var(--border);
 }
 .stack-form label { display: grid; gap: var(--space-1); }
+.name-suggest {
+  position: relative;
+}
+.name-suggest-list {
+  list-style: none;
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  max-height: 240px;
+  overflow: auto;
+}
+.name-suggest-list li {
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+}
+.name-suggest-list li:last-child { border-bottom: none; }
+.name-suggest-list button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.name-suggest-list button:hover,
+.name-suggest-list button:focus-visible {
+  background: var(--accent-soft);
+}
 .check-row {
   display: flex !important;
   align-items: center;

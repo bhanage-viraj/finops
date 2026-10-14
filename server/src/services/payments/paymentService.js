@@ -624,28 +624,45 @@ export async function rejectPayment(id, user, reason) {
   return serializePayment(payment);
 }
 
+/**
+ * Unpaid Zoho invoices for the Payments link UI.
+ * With a keyword (e.g. "form"), return name / invoice# matches, name hits first.
+ */
 export async function listOpenInvoices(env, search = '') {
   const invoices = await loadZohoInvoices(env);
   const q = String(search || '').trim().toLowerCase();
-  return invoices
-    .filter((invoice) => {
-      if (!q) return true;
-      const hay = [invoice.invoiceNo, invoice.invoiceNumber, invoice.customerName, invoice.customerId]
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    })
-    .map((invoice) => ({
-      id: invoice.invoiceId,
-      invoiceNo: invoice.invoiceNo || invoice.invoiceNumber,
-      amount: null,
-      paidAmount: null,
-      remaining: invoice.remaining,
-      status: invoice.status,
-      dueDate: invoice.dueDate,
-      customerName: invoice.customerName,
-      erpCustomerId: invoice.customerId,
-    }));
+  const mapped = invoices.map((invoice) => ({
+    id: invoice.invoiceId,
+    invoiceNo: invoice.invoiceNo || invoice.invoiceNumber,
+    amount: null,
+    paidAmount: null,
+    remaining: invoice.remaining,
+    status: invoice.status,
+    dueDate: invoice.dueDate,
+    customerName: invoice.customerName,
+    erpCustomerId: invoice.customerId,
+  }));
+  if (!q) return mapped.slice(0, 100);
+
+  const scored = [];
+  for (const row of mapped) {
+    const name = String(row.customerName || '').toLowerCase();
+    const invoiceNo = String(row.invoiceNo || '').toLowerCase();
+    const nameStarts = name.startsWith(q);
+    const nameHas = name.includes(q);
+    const invHas = invoiceNo.includes(q);
+    if (!nameHas && !invHas) continue;
+    let rank = 3;
+    if (nameStarts) rank = 0;
+    else if (nameHas) rank = 1;
+    else rank = 2;
+    scored.push({ row, rank });
+  }
+  scored.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return String(a.row.customerName || '').localeCompare(String(b.row.customerName || ''));
+  });
+  return scored.slice(0, 40).map((entry) => entry.row);
 }
 
 export function fileKeyFor(payment) {
