@@ -544,16 +544,19 @@ export async function approvePayment(id, user, body = {}, env) {
   if (!Number.isInteger(remaining) || remaining <= 0) {
     throw httpError(400, 'Matched invoice remaining balance is missing. Re-match the invoice.');
   }
-  if (amount > remaining) {
-    const reason = String(body.overpaymentReason || payment.overpaymentReason || '').trim();
-    if (!reason) {
-      throw httpError(400, 'Overpayments need a reason before approval.');
-    }
-    payment.overpaymentReason = reason;
+  const applied = Math.min(amount, remaining);
+  const excess = amount > remaining ? amount - remaining : 0;
+  const reason = String(body.overpaymentReason || payment.overpaymentReason || '').trim();
+  if (excess > 0) {
+    // Zoho keeps unused amount as excess; reason is optional audit text.
+    payment.overpaymentReason = reason || `Excess Rp ${excess} unused on invoice`;
   }
 
-  const applied = Math.min(amount, remaining);
   const dateIso = zohoPaymentDateIso(effectivePaidAt(payment) || new Date());
+  const notes = [
+    paymentNotes(payment),
+    excess > 0 ? `Excess Rp ${excess}${reason ? ` · ${reason}` : ''}` : '',
+  ].filter(Boolean).join(' · ').slice(0, 200);
 
   const { refreshToken } = await requireZohoReady(env);
   let zohoResult;
@@ -570,7 +573,7 @@ export async function approvePayment(id, user, body = {}, env) {
         paymentMode: 'banktransfer',
         accountId: env.zoho.paymentDepositAccountId,
         referenceNumber: payment.ai?.reference || '',
-        description: paymentNotes(payment),
+        description: notes,
       },
     });
   } catch (error) {

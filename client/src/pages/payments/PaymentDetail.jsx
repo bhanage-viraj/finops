@@ -339,14 +339,20 @@ export default function PaymentDetail() {
               )}
 
               {(payment.matchType === 'over' || amountExcess > 0) && (
-                <label>
-                  Excess / overpayment reason (required — payment is larger than amount due)
-                  <input
-                    value={overReason}
-                    onChange={(event) => setOverReason(event.target.value)}
-                    placeholder="Why is the transfer larger than the invoice?"
-                  />
-                </label>
+                <>
+                  <p className="message message-warn">
+                    Transfer is larger than amount due. Zoho will apply {formatRupiah(amountApplied)} to the invoice
+                    and leave {formatRupiah(amountExcess)} as unused excess.
+                  </p>
+                  <label>
+                    Excess note (optional)
+                    <input
+                      value={overReason}
+                      onChange={(event) => setOverReason(event.target.value)}
+                      placeholder="Optional note for accounts"
+                    />
+                  </label>
+                </>
               )}
 
               <button
@@ -359,10 +365,6 @@ export default function PaymentDetail() {
                   }
                   if (!statementChecked) {
                     throw new Error('Tick “I checked this transfer on the bank statement” before recording.');
-                  }
-                  const isOver = payment.matchType === 'over' || amountExcess > 0;
-                  if (isOver && !String(overReason || '').trim()) {
-                    throw new Error('This payment is over the invoice balance — enter an excess reason.');
                   }
                   if (!payment.statementVerified) {
                     await verifyPayment(id);
