@@ -9,6 +9,7 @@ import {
   loadPayment,
   rejectPayment,
   setPaymentMatch,
+  updatePaymentHints,
   verifyPayment,
 } from '../services/payments/paymentService.js';
 import { asyncHandler, httpError } from '../utils/http.js';
@@ -19,6 +20,7 @@ export function uploadPayments(env) {
       user: req.user,
       files: req.files,
       env,
+      hints: req.body || {},
     });
     if (created.length === 0) {
       res.status(400).json({ error: 'No screenshots were saved.', rejected });
@@ -63,6 +65,12 @@ export function file(env) {
 export function match(env) {
   return asyncHandler(async (req, res) => {
     res.json({ payment: await setPaymentMatch(req.params.id, req.user, req.body || {}, env) });
+  });
+}
+
+export function hints(env) {
+  return asyncHandler(async (req, res) => {
+    res.json({ payment: await updatePaymentHints(req.params.id, req.user, req.body || {}, env) });
   });
 }
 

@@ -28,8 +28,12 @@ const bankPaymentSchema = new Schema({
     readAt: { type: Date, default: null },
     raw: { type: Schema.Types.Mixed, default: null },
   },
+  // Staff caption / WhatsApp hints. Never overwrite ai.*.
   confirmed: {
     sender: { type: String, default: null },
+    customerName: { type: String, default: null },
+    siteNote: { type: String, default: null },
+    invoiceHint: { type: String, default: null },
     amount: integerRupiahField(),
     paidAt: { type: Date, default: null },
   },

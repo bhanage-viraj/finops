@@ -43,9 +43,9 @@ A sample you can photograph or upload is generated with `node scripts/makeSample
 
 ## Payment reconciliation
 
-Open Payments at http://localhost:5173/payments. Upload a bank transfer screenshot. The model reads the **sender** (payer), amount, time and reference, then suggests an unpaid Zoho invoice by customer name and remaining balance. A match is only a proposal. An accountant opens the row (screenshot + invoice side by side), ticks the bank statement check, then **Approves**. Approve records a **customer payment in Zoho Books**, which marks the invoice paid or partially paid there.
+Open Payments at http://localhost:5173/payments. Upload the WhatsApp bank screenshot. The model reads bank sender, amount, time and reference. On the detail page, paste the **caption customer name** (often different from the bank sender) and optional invoice #. Match is only a proposal. An accountant checks the bank statement, then **Record Payment** — Zoho `customerpayments.CREATE` under Payments Received, which marks the matched invoice paid or partially paid. Screenshot proof stays in FinOps (Zoho write is payment create only).
 
-This flow is separate from Documents (expenses) and Follow-up (overdue reminders). Set `ZOHO_PAYMENT_DEPOSIT_ACCOUNT_ID` to the Zoho bank account that receives transfers. After deploy, **reconnect Zoho** so the `customerpayments.CREATE` scope is granted, and turn the Overview kill switch on.
+This flow is separate from Documents (expenses) and Follow-up (overdue reminders). Set `ZOHO_PAYMENT_DEPOSIT_ACCOUNT_ID` to the Zoho bank account that receives transfers (OCBC PT TIGRIS). After deploy, **reconnect Zoho** so the `customerpayments.CREATE` scope is granted, and turn the Overview kill switch on.
 
 ## Zoho Books
 

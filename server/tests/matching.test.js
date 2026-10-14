@@ -97,3 +97,66 @@ test('partial payment is medium and never high when amount is below remaining', 
   assert.equal(result.matchConfidence, 'medium');
   assert.equal(String(result.matchedInvoiceId), 'inv-partial');
 });
+
+test('caption customer name beats bank sender for matching', async (t) => {
+  const originalPaymentFind = BankPayment.find;
+  BankPayment.find = () => ({ select: () => ({ lean: async () => [] }) });
+  t.after(() => { BankPayment.find = originalPaymentFind; });
+
+  const invoices = [{
+    invoiceId: 'inv-y',
+    invoiceNo: 'INV-Y',
+    customerId: 'c-y',
+    customerName: 'Yurike Cindy',
+    aliases: [],
+    remaining: 110000,
+    dueDate: '2026-10-05',
+    date: '2026-09-20',
+    status: 'sent',
+  }];
+
+  const byBankSender = await matchPayment({
+    sender: 'Janet Leilani Wijaya',
+    amount: 110000,
+    paidAt: new Date('2026-10-01T01:52:00Z'),
+    invoices,
+  });
+  assert.equal(byBankSender.matchedInvoiceId, null);
+
+  const byCaption = await matchPayment({
+    sender: 'Janet Leilani Wijaya',
+    customerName: 'Yurike Cindy',
+    amount: 110000,
+    paidAt: new Date('2026-10-01T01:52:00Z'),
+    invoices,
+  });
+  assert.equal(byCaption.matchConfidence, 'high');
+  assert.equal(String(byCaption.matchedInvoiceId), 'inv-y');
+});
+
+test('exact invoice number hint is high confidence', async (t) => {
+  const originalPaymentFind = BankPayment.find;
+  BankPayment.find = () => ({ select: () => ({ lean: async () => [] }) });
+  t.after(() => { BankPayment.find = originalPaymentFind; });
+
+  const result = await matchPayment({
+    sender: 'Someone Else',
+    invoiceNumberHint: 'INV-065044',
+    amount: 480000,
+    paidAt: new Date('2026-10-14T00:00:00Z'),
+    invoices: [{
+      invoiceId: 'inv-65044',
+      invoiceNo: 'INV-065044',
+      customerId: 'c-2moods',
+      customerName: '2Moods Resto',
+      aliases: [],
+      remaining: 1220000,
+      dueDate: '2026-07-09',
+      date: '2026-07-11',
+      status: 'overdue',
+    }],
+  });
+  assert.equal(result.matchConfidence, 'high');
+  assert.equal(result.matchType, 'partial');
+  assert.equal(String(result.matchedInvoiceId), 'inv-65044');
+});

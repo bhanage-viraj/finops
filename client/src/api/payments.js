@@ -13,10 +13,17 @@ export function fetchPayment(id) {
   return api(`/payments/${id}`);
 }
 
-export function uploadPayments(files) {
+export function uploadPayments(files, hints = {}) {
   const body = new FormData();
   for (const file of files) body.append('files', file);
+  Object.entries(hints).forEach(([key, value]) => {
+    if (value != null && String(value).trim() !== '') body.append(key, String(value));
+  });
   return api('/payments', { method: 'POST', body });
+}
+
+export function updatePaymentHints(id, payload) {
+  return api(`/payments/${id}/hints`, { method: 'PATCH', json: payload });
 }
 
 export function matchPayment(id, payload) {

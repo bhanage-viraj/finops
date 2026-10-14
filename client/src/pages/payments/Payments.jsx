@@ -129,7 +129,7 @@ export default function Payments() {
         }
         await approvePayment(id, payload);
       }
-      setMessage('Approved. Customer payment recorded in Zoho Books.');
+      setMessage('Recorded in Zoho Payments Received. Invoice marked paid or partial.');
       setSelected(new Set());
       load();
     } catch (err) {
@@ -154,8 +154,14 @@ export default function Payments() {
           )}
         </td>
         <td>
-          <Link to={`/payments/${payment.id}`}>{payment.ai?.sender || '—'}</Link>
-          <div className="hint">{payment.ai?.reference || payment.originalName}</div>
+          <Link to={`/payments/${payment.id}`}>
+            {payment.confirmed?.customerName || payment.ai?.sender || '—'}
+          </Link>
+          <div className="hint">
+            {payment.confirmed?.customerName && payment.ai?.sender
+              ? `Bank: ${payment.ai.sender}`
+              : (payment.ai?.reference || payment.originalName)}
+          </div>
         </td>
         <td>{formatRupiah(payment.ai?.amount)}</td>
         <td>{formatWhen(payment.ai?.paidAt)}</td>
@@ -194,16 +200,16 @@ export default function Payments() {
         <div>
           <h1>Payments</h1>
           <p className="hint">
-            Matches unpaid Zoho invoices from bank screenshots. Nothing is marked paid in Zoho until the bank statement is checked and an accountant approves.
+            Bank screenshot proofs → match unpaid Zoho invoice → Record Payment in Payments Received. Documents and Follow-up stay separate. Screenshot alone never writes Zoho.
           </p>
         </div>
         {canReview && (
           <div className="page-actions">
             <button type="button" className="btn btn-secondary" disabled={busy || selected.size === 0} onClick={verifySelected}>
-              Mark statement checked ({selected.size})
+              Check statement ({selected.size})
             </button>
             <button type="button" className="btn btn-primary" disabled={busy || selected.size === 0} onClick={approveSelected}>
-              Approve selected ({selected.size})
+              Record Payment ({selected.size})
             </button>
           </div>
         )}
@@ -220,8 +226,10 @@ export default function Payments() {
           await onUpload(fake);
         }}
       >
-        <h2>Bank screenshots</h2>
-        <p className="hint">Paste or drop transfer screenshots. The model reads sender, amount, time and reference, then suggests an invoice.</p>
+        <h2>Payment proofs</h2>
+        <p className="hint">
+          Upload the WhatsApp bank screenshot. On the detail page, paste the caption customer name (often different from the bank sender), then Record Payment.
+        </p>
         <label className="btn btn-primary">
           {busy ? 'Working…' : 'Upload screenshots'}
           <input type="file" accept="image/*" multiple disabled={busy} onChange={onUpload} />
@@ -263,7 +271,7 @@ export default function Payments() {
             {exceptions.map((payment) => (
               <li key={payment.id}>
                 <div>
-                  <strong>{payment.ai?.sender || payment.originalName || 'Unread screenshot'}</strong>
+                  <strong>{payment.confirmed?.customerName || payment.ai?.sender || payment.originalName || 'Unread screenshot'}</strong>
                   <div className="hint">
                     {formatRupiah(payment.ai?.amount)} · {payment.matchReasons?.[0] || payment.failureMessage || 'Needs a manual match'}
                   </div>

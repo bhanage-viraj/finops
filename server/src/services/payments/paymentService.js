@@ -11,15 +11,71 @@ import { matchPayment } from '../matching/matcher.js';
 import { createFileStorage, extensionFor } from '../storage/fileStorage.js';
 import { displayFileName, inspectUpload, prepareStoredBytes } from '../documents/uploads.js';
 import { httpError } from '../../utils/http.js';
+import { parsePaymentAmount, parsePaymentDate } from '../ai/schemas.js';
+import { parseDate } from '../documents/numbers.js';
 
 function canReview(user) {
   return user.role === 'accountant' || user.role === 'admin';
+}
+
+/** Calendar day for Zoho Payments Received (no timezone day-shift). */
+function zohoPaymentDateIso(paidAt) {
+  if (!paidAt) return new Date().toISOString().slice(0, 10);
+  if (typeof paidAt === 'string') {
+    const parsed = parseDate(paidAt);
+    if (parsed.normalized) return parsed.normalized;
+    if (/^\d{4}-\d{2}-\d{2}/.test(paidAt)) return paidAt.slice(0, 10);
+  }
+  const d = paidAt instanceof Date ? paidAt : new Date(paidAt);
+  if (Number.isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function effectiveAmount(payment) {
+  const confirmed = payment.confirmed?.amount;
+  if (confirmed != null && Number.isInteger(confirmed)) return confirmed;
+  return payment.ai?.amount ?? null;
+}
+
+function effectivePaidAt(payment) {
+  return payment.confirmed?.paidAt || payment.ai?.paidAt || null;
+}
+
+function matchCustomerName(payment) {
+  return payment.confirmed?.customerName
+    || payment.confirmed?.sender
+    || payment.ai?.sender
+    || null;
+}
+
+function paymentNotes(payment) {
+  const customer = payment.confirmed?.customerName || '';
+  const site = payment.confirmed?.siteNote || '';
+  const bankSender = payment.ai?.sender || '';
+  const parts = [
+    customer ? `Customer: ${customer}` : '',
+    site ? `Note: ${site}` : '',
+    bankSender && bankSender !== customer ? `Bank sender: ${bankSender}` : '',
+    'FinOps screenshot proof (stored in FinOps)',
+  ].filter(Boolean);
+  return parts.join(' · ').slice(0, 200);
 }
 
 function serializePayment(doc) {
   const payment = typeof doc.toObject === 'function' ? doc.toObject() : doc;
   const snap = payment.matchedInvoice || {};
   const hasMatch = Boolean(payment.zohoInvoiceId);
+  const amountReceived = effectiveAmount(payment);
+  const remaining = snap.remaining ?? null;
+  const amountApplied = amountReceived != null && remaining != null
+    ? Math.min(amountReceived, remaining)
+    : null;
+  const amountExcess = amountReceived != null && remaining != null && amountReceived > remaining
+    ? amountReceived - remaining
+    : 0;
   return {
     id: String(payment._id),
     status: payment.status,
@@ -28,6 +84,9 @@ function serializePayment(doc) {
     size: payment.size,
     ai: payment.ai,
     confirmed: payment.confirmed,
+    amountReceived,
+    amountApplied,
+    amountExcess,
     matchedInvoiceId: payment.zohoInvoiceId || null,
     matchedCustomerId: payment.zohoCustomerId || null,
     zohoInvoiceId: payment.zohoInvoiceId || '',
@@ -116,10 +175,70 @@ function applyMatchResult(payment, match) {
   }
 }
 
-export async function createPayments({ user, files, env }) {
+function parseHintsFromBody(body = {}) {
+  const customerName = String(body.customerName || '').trim().slice(0, 200) || null;
+  const siteNote = String(body.siteNote || '').trim().slice(0, 120) || null;
+  const invoiceHint = String(body.invoiceHint || body.invoiceNumberHint || '').trim().slice(0, 80) || null;
+  let amount = null;
+  if (body.amount != null && String(body.amount).trim() !== '') {
+    amount = Number.isInteger(body.amount) ? body.amount : parsePaymentAmount(body.amount);
+    if (amount == null || !Number.isInteger(amount) || amount <= 0) {
+      throw httpError(400, 'Amount must be a whole number of rupiah.');
+    }
+  }
+  let paidAt = null;
+  if (body.paidAt != null && String(body.paidAt).trim() !== '') {
+    const asDate = parsePaymentDate(body.paidAt) || (() => {
+      const iso = parseDate(body.paidAt).normalized;
+      return iso ? new Date(`${iso}T00:00:00.000Z`) : null;
+    })();
+    if (!asDate) throw httpError(400, 'Payment date must be a valid day/month/year or ISO date.');
+    paidAt = asDate;
+  }
+  return { customerName, siteNote, invoiceHint, amount, paidAt };
+}
+
+async function rematchPaymentDoc(payment, env) {
+  const amount = effectiveAmount(payment);
+  const paidAt = effectivePaidAt(payment);
+  const customerName = matchCustomerName(payment);
+  const invoiceHint = payment.confirmed?.invoiceHint || null;
+  let zohoInvoices = [];
+  try {
+    zohoInvoices = await loadZohoInvoices(env);
+  } catch (error) {
+    payment.matchReasons = [error.message || 'Zoho invoices could not be loaded.'];
+    payment.flags = ['unidentified'];
+    payment.matchConfidence = 'low';
+    payment.matchType = 'none';
+    payment.zohoInvoiceId = '';
+    payment.zohoCustomerId = '';
+    payment.matchedInvoice = {
+      invoiceNumber: '', customerName: '', remaining: null, dueDate: '', status: '',
+    };
+    payment.status = payment.statementVerified ? 'verified' : 'read';
+    return;
+  }
+  const match = await matchPayment({
+    sender: payment.ai?.sender,
+    customerName,
+    invoiceNumberHint: invoiceHint,
+    amount,
+    paidAt,
+    invoices: zohoInvoices,
+    excludePaymentId: payment._id,
+  });
+  applyMatchResult(payment, match);
+  if (payment.statementVerified && payment.zohoInvoiceId) {
+    payment.status = 'verified';
+  }
+}
+
+export async function createPayments({ user, files, env, hints = {} }) {
   const storage = createFileStorage(env.upload.dir);
   const created = [];
   const rejected = [];
+  const parsedHints = parseHintsFromBody(hints);
 
   let zohoInvoices = [];
   let zohoError = '';
@@ -162,6 +281,14 @@ export async function createPayments({ user, files, env }) {
       size: bytes.length,
       imageKey,
       status: 'read',
+      confirmed: {
+        customerName: parsedHints.customerName,
+        siteNote: parsedHints.siteNote,
+        invoiceHint: parsedHints.invoiceHint,
+        amount: parsedHints.amount,
+        paidAt: parsedHints.paidAt,
+        sender: null,
+      },
     });
 
     try {
@@ -188,8 +315,10 @@ export async function createPayments({ user, files, env }) {
       } else {
         const match = await matchPayment({
           sender: extraction.sender,
-          amount: extraction.amount,
-          paidAt: extraction.paidAt,
+          customerName: parsedHints.customerName || extraction.sender,
+          invoiceNumberHint: parsedHints.invoiceHint,
+          amount: parsedHints.amount ?? extraction.amount,
+          paidAt: parsedHints.paidAt || extraction.paidAt,
           invoices: zohoInvoices,
           excludePaymentId: payment._id,
         });
@@ -286,7 +415,7 @@ export async function setPaymentMatch(id, user, body = {}, env) {
     matchConfidence: payment.matchConfidence,
   };
 
-  const amount = payment.confirmed?.amount ?? payment.ai?.amount;
+  const amount = effectiveAmount(payment);
   let matchType = 'exact';
   if (amount != null && Number.isInteger(amount)) {
     if (amount < invoice.remaining) matchType = 'partial';
@@ -350,8 +479,47 @@ export async function verifyPayment(id, user) {
 }
 
 /**
- * After statement verify: record customer payment in Zoho (marks invoice paid/partial there).
- * Independent of Documents and Follow-up.
+ * Save WhatsApp caption hints and re-match unpaid Zoho invoices.
+ * Does not write to Zoho — only Record Payment (approve) does.
+ */
+export async function updatePaymentHints(id, user, body = {}, env) {
+  if (!canReview(user)) throw httpError(403, 'Only an accountant can edit payment hints.');
+  const payment = await loadPayment(id, user);
+  if (payment.status === 'approved') throw httpError(400, 'This payment is already recorded in Zoho.');
+  if (payment.status === 'rejected') throw httpError(400, 'This payment was rejected.');
+
+  const hints = parseHintsFromBody(body);
+  if (!payment.confirmed) payment.confirmed = {};
+  if (body.customerName !== undefined) payment.confirmed.customerName = hints.customerName;
+  if (body.siteNote !== undefined) payment.confirmed.siteNote = hints.siteNote;
+  if (body.invoiceHint !== undefined || body.invoiceNumberHint !== undefined) {
+    payment.confirmed.invoiceHint = hints.invoiceHint;
+  }
+  if (body.amount !== undefined) payment.confirmed.amount = hints.amount;
+  if (body.paidAt !== undefined) payment.confirmed.paidAt = hints.paidAt;
+
+  await rematchPaymentDoc(payment, env);
+  await payment.save();
+  await writeAudit({
+    userId: user._id,
+    action: 'match',
+    entity: 'bankPayments',
+    entityId: payment._id,
+    after: {
+      customerName: payment.confirmed.customerName,
+      invoiceHint: payment.confirmed.invoiceHint,
+      amount: payment.confirmed.amount,
+      paidAt: payment.confirmed.paidAt,
+      zohoInvoiceId: payment.zohoInvoiceId,
+      matchConfidence: payment.matchConfidence,
+    },
+  });
+  return serializePayment(payment);
+}
+
+/**
+ * After statement verify: Zoho Payments Received (customerpayments.CREATE).
+ * Marks the matched invoice paid/partial. Independent of Documents and Follow-up.
  */
 export async function approvePayment(id, user, body = {}, env) {
   if (!canReview(user)) throw httpError(403, 'Only an accountant can approve a payment.');
@@ -364,10 +532,10 @@ export async function approvePayment(id, user, body = {}, env) {
     throw httpError(400, 'Tick the bank statement check before approving. A screenshot alone is not proof.');
   }
   if (!payment.zohoInvoiceId || !payment.zohoCustomerId) {
-    throw httpError(400, 'Match a Zoho invoice before approving.');
+    throw httpError(400, 'Match a Zoho invoice before recording the payment.');
   }
 
-  const amount = payment.confirmed?.amount ?? payment.ai?.amount;
+  const amount = effectiveAmount(payment);
   if (amount == null || !Number.isInteger(amount) || amount <= 0) {
     throw httpError(400, 'Payment amount is missing or invalid.');
   }
@@ -385,8 +553,7 @@ export async function approvePayment(id, user, body = {}, env) {
   }
 
   const applied = Math.min(amount, remaining);
-  const paidAt = payment.confirmed?.paidAt || payment.ai?.paidAt || new Date();
-  const dateIso = new Date(paidAt).toISOString().slice(0, 10);
+  const dateIso = zohoPaymentDateIso(effectivePaidAt(payment) || new Date());
 
   const { refreshToken } = await requireZohoReady(env);
   let zohoResult;
@@ -403,7 +570,7 @@ export async function approvePayment(id, user, body = {}, env) {
         paymentMode: 'banktransfer',
         accountId: env.zoho.paymentDepositAccountId,
         referenceNumber: payment.ai?.reference || '',
-        description: `FinOps bank screenshot · ${payment.ai?.sender || ''}`.slice(0, 200),
+        description: paymentNotes(payment),
       },
     });
   } catch (error) {
@@ -427,6 +594,7 @@ export async function approvePayment(id, user, body = {}, env) {
       zohoPaymentId: payment.zohoPaymentId,
       applied,
       amount,
+      date: dateIso,
     },
   });
 
