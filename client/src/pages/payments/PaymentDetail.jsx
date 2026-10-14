@@ -54,6 +54,7 @@ export default function PaymentDetail() {
   const [amount, setAmount] = useState('');
   const [overReason, setOverReason] = useState('');
   const [rejectReason, setRejectReason] = useState('');
+  const [statementChecked, setStatementChecked] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -64,6 +65,7 @@ export default function PaymentDetail() {
     const row = body.payment;
     setPayment(row);
     setOverReason(row.overpaymentReason || '');
+    setStatementChecked(Boolean(row.statementVerified));
     setCustomerName(row.confirmed?.customerName || '');
     setSiteNote(row.confirmed?.siteNote || '');
     setInvoiceHint(row.confirmed?.invoiceHint || '');
@@ -323,36 +325,57 @@ export default function PaymentDetail() {
 
           {editable && (
             <div className="stack-form">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={busy || !payment.matchedInvoiceId || payment.statementVerified}
-                onClick={() => run(async () => {
-                  await verifyPayment(id);
-                  setMessage('Statement checked. Record Payment to write Payments Received in Zoho.');
-                })}
-              >
-                Check bank statement
-              </button>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={statementChecked}
+                  disabled={busy || !payment.matchedInvoiceId}
+                  onChange={(event) => setStatementChecked(event.target.checked)}
+                />
+                I checked this transfer on the bank statement
+              </label>
+              {!payment.matchedInvoiceId && (
+                <p className="hint">Link an unpaid invoice (type a customer keyword above) before recording.</p>
+              )}
 
               {(payment.matchType === 'over' || amountExcess > 0) && (
                 <label>
-                  Excess / overpayment reason
-                  <input value={overReason} onChange={(event) => setOverReason(event.target.value)} />
+                  Excess / overpayment reason (required — payment is larger than amount due)
+                  <input
+                    value={overReason}
+                    onChange={(event) => setOverReason(event.target.value)}
+                    placeholder="Why is the transfer larger than the invoice?"
+                  />
                 </label>
               )}
 
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={busy || payment.status !== 'verified'}
+                disabled={busy || !payment.matchedInvoiceId}
                 onClick={() => run(async () => {
+                  if (!payment.matchedInvoiceId) {
+                    throw new Error('Link an unpaid Zoho invoice first.');
+                  }
+                  if (!statementChecked) {
+                    throw new Error('Tick “I checked this transfer on the bank statement” before recording.');
+                  }
+                  const isOver = payment.matchType === 'over' || amountExcess > 0;
+                  if (isOver && !String(overReason || '').trim()) {
+                    throw new Error('This payment is over the invoice balance — enter an excess reason.');
+                  }
+                  if (!payment.statementVerified) {
+                    await verifyPayment(id);
+                  }
                   await approvePayment(id, { overpaymentReason: overReason });
                   setMessage('Recorded in Zoho Payments Received. Invoice marked paid or partial.');
                 })}
               >
                 Record Payment in Zoho
               </button>
+              <p className="hint">
+                Creates a Payments Received entry and marks the invoice paid or partial. Screenshot alone is not enough — confirm the statement checkbox.
+              </p>
 
               <label>
                 Reject reason
