@@ -4,7 +4,7 @@ import BankPayment from '../src/models/BankPayment.js';
 import { approvePayment } from '../src/services/payments/paymentService.js';
 
 function accountant() {
-  return { _id: 'acct1', role: 'accountant' };
+  return { id: 'acct1', role: 'accountant' };
 }
 
 test('approve refuses when statement is not verified', async (t) => {
@@ -46,7 +46,7 @@ test('staff cannot approve', async (t) => {
   t.after(() => { BankPayment.findById = original; });
 
   await assert.rejects(
-    () => approvePayment('p1', { _id: 'staff1', role: 'staff' }, {}, { zoho: {} }),
+    () => approvePayment('p1', { id: 'staff1', role: 'staff' }, {}, { zoho: {} }),
     /accountant/i,
   );
 });

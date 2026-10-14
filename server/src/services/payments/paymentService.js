@@ -275,7 +275,7 @@ export async function createPayments({ user, files, env, hints = {} }) {
     const imageKey = await storage.save(bytes, extensionFor(mimeType));
 
     const payment = await BankPayment.create({
-      uploadedBy: user._id,
+      uploadedBy: user.id,
       originalName: filename,
       mimeType,
       size: bytes.length,
@@ -327,7 +327,7 @@ export async function createPayments({ user, files, env, hints = {} }) {
 
       await payment.save();
       await writeAudit({
-        userId: user._id,
+        userId: user.id,
         action: 'create',
         entity: 'bankPayments',
         entityId: payment._id,
@@ -347,7 +347,7 @@ export async function createPayments({ user, files, env, hints = {} }) {
         : (error.message || 'The screenshot could not be read.');
       await payment.save();
       await writeAudit({
-        userId: user._id,
+        userId: user.id,
         action: 'create',
         entity: 'bankPayments',
         entityId: payment._id,
@@ -372,7 +372,7 @@ export async function listPayments(user, query = {}) {
       { zohoInvoiceId: { $in: ['', null] }, status: { $nin: ['approved', 'rejected'] } },
     ];
   }
-  if (user.role === 'staff') filter.uploadedBy = user._id;
+  if (user.role === 'staff') filter.uploadedBy = user.id;
 
   const rows = await BankPayment.find(filter).sort({ createdAt: -1 }).limit(200);
   return rows.map(serializePayment);
@@ -381,7 +381,7 @@ export async function listPayments(user, query = {}) {
 export async function getPayment(id, user) {
   const payment = await BankPayment.findById(id);
   if (!payment) throw httpError(404, 'Payment not found.');
-  if (user.role === 'staff' && String(payment.uploadedBy) !== String(user._id)) {
+  if (user.role === 'staff' && String(payment.uploadedBy) !== String(user.id)) {
     throw httpError(403, 'You do not have access to this payment.');
   }
   return serializePayment(payment);
@@ -390,7 +390,7 @@ export async function getPayment(id, user) {
 export async function loadPayment(id, user) {
   const payment = await BankPayment.findById(id);
   if (!payment) throw httpError(404, 'Payment not found.');
-  if (user.role === 'staff' && String(payment.uploadedBy) !== String(user._id)) {
+  if (user.role === 'staff' && String(payment.uploadedBy) !== String(user.id)) {
     throw httpError(403, 'You do not have access to this payment.');
   }
   return payment;
@@ -439,7 +439,7 @@ export async function setPaymentMatch(id, user, body = {}, env) {
   await payment.save();
 
   await writeAudit({
-    userId: user._id,
+    userId: user.id,
     action: 'match',
     entity: 'bankPayments',
     entityId: payment._id,
@@ -464,12 +464,12 @@ export async function verifyPayment(id, user) {
   }
 
   payment.statementVerified = true;
-  payment.verifiedBy = user._id;
+  payment.verifiedBy = user.id;
   payment.verifiedAt = new Date();
   payment.status = 'verified';
   await payment.save();
   await writeAudit({
-    userId: user._id,
+    userId: user.id,
     action: 'verify',
     entity: 'bankPayments',
     entityId: payment._id,
@@ -501,7 +501,7 @@ export async function updatePaymentHints(id, user, body = {}, env) {
   await rematchPaymentDoc(payment, env);
   await payment.save();
   await writeAudit({
-    userId: user._id,
+    userId: user.id,
     action: 'match',
     entity: 'bankPayments',
     entityId: payment._id,
@@ -579,12 +579,12 @@ export async function approvePayment(id, user, body = {}, env) {
 
   payment.zohoPaymentId = zohoResult.paymentId;
   payment.status = 'approved';
-  payment.approvedBy = user._id;
+  payment.approvedBy = user.id;
   payment.approvedAt = new Date();
   await payment.save();
 
   await writeAudit({
-    userId: user._id,
+    userId: user.id,
     action: 'approve',
     entity: 'bankPayments',
     entityId: payment._id,
@@ -611,11 +611,11 @@ export async function rejectPayment(id, user, reason) {
   }
   payment.status = 'rejected';
   payment.rejectReason = text.slice(0, 500);
-  payment.rejectedBy = user._id;
+  payment.rejectedBy = user.id;
   payment.rejectedAt = new Date();
   await payment.save();
   await writeAudit({
-    userId: user._id,
+    userId: user.id,
     action: 'reject',
     entity: 'bankPayments',
     entityId: payment._id,
