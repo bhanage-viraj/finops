@@ -41,17 +41,17 @@ export function formatDueDateId(iso) {
 
 /** Editable overdue reminder. Staff send it from WhatsApp themselves. */
 export function draftWhatsAppMessage(invoice) {
-  const name = invoice.customerName || 'Bapak/Ibu';
-  const number = invoice.invoiceNumber || '-';
-  const amount = formatRupiahText(invoice.balance);
-  const due = formatDueDateId(invoice.dueDate);
-  const link = String(invoice.invoiceUrl || '').trim();
-  const linkLine = link ? `\n\nInvoice: ${link}` : '\n\nInvoice PDF terlampir.';
+  const name = invoice.customerName || '';
+  const due = formatDueDateId(invoice.dueDate) || '—';
+  const greeting = name ? `Hi, Mr./Mrs ${name},` : 'Hi, Mr./Mrs,';
   return (
-    `Halo ${name},\n\n`
-    + `Kami ingin mengingatkan invoice ${number} sebesar ${amount} `
-    + `yang jatuh tempo pada ${due} masih belum lunas.`
-    + `${linkLine}\n\n`
-    + `Mohon konfirmasi pembayarannya. Terima kasih.`
+    `${greeting}\n\n`
+    + 'We hope you are enjoying your water as always!\n\n'
+    + `A kind reminder that payment for your latest delivery is due invoice on ${due}. `
+    + 'Please feel free to transfer at your convenience using the details below.\n\n'
+    + 'Account Name: PT Tigris Inovatif Solusi\n'
+    + 'Account Number: 7228-0000-0522 (IDR)\n'
+    + 'Bank Name: OCBC NISP\n\n'
+    + 'Thank you so much, we are grateful for your support.'
   );
 }

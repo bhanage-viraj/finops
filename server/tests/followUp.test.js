@@ -24,28 +24,25 @@ test('due date groups keep same-day invoices together', () => {
   assert.deepEqual(groups[1].invoices.map((row) => row.invoiceId), ['3', '1']);
 });
 
-test('the WhatsApp draft includes invoice and amount', () => {
+test('the WhatsApp draft uses the English reminder with due date and bank details', () => {
   const text = draftWhatsAppMessage({
     customerName: 'Budi',
     invoiceNumber: 'INV-22',
     balance: 250000,
     dueDate: '2026-09-15',
   });
-  assert.match(text, /Budi/);
-  assert.match(text, /INV-22/);
-  assert.match(text, /250\.000/);
-  assert.match(text, /15\/09\/2026/);
-  assert.match(text, /Invoice PDF terlampir/);
+  assert.match(text, /Hi, Mr\.\/Mrs Budi,/);
+  assert.match(text, /enjoying your water/);
+  assert.match(text, /due invoice on 15\/09\/2026/);
+  assert.match(text, /PT Tigris Inovatif Solusi/);
+  assert.match(text, /7228-0000-0522/);
+  assert.match(text, /OCBC NISP/);
 });
 
-test('the WhatsApp draft includes the Zoho invoice link when present', () => {
+test('the WhatsApp draft still works without a customer name', () => {
   const text = draftWhatsAppMessage({
-    customerName: 'Budi',
-    invoiceNumber: 'INV-22',
-    balance: 250000,
     dueDate: '2026-09-15',
-    invoiceUrl: 'https://books.zoho.com/portal/x/invoice/abc',
   });
-  assert.match(text, /https:\/\/books\.zoho\.com\/portal\/x\/invoice\/abc/);
-  assert.doesNotMatch(text, /Invoice PDF terlampir/);
+  assert.match(text, /Hi, Mr\.\/Mrs,/);
+  assert.match(text, /15\/09\/2026/);
 });
