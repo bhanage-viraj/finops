@@ -29,32 +29,18 @@ function formatWhen(value) {
   }
 }
 
-function dateInputValue(value) {
-  if (!value) return '';
-  try {
-    return new Date(value).toISOString().slice(0, 10);
-  } catch {
-    return '';
-  }
-}
-
 export default function PaymentDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const canReview = user?.role === 'accountant' || user?.role === 'admin';
   const [payment, setPayment] = useState(null);
   const [imageUrl, setImageUrl] = useState('');
+  const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [suggesting, setSuggesting] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [siteNote, setSiteNote] = useState('');
-  const [invoiceHint, setInvoiceHint] = useState('');
-  const [paidAt, setPaidAt] = useState('');
-  const [amount, setAmount] = useState('');
-  const [overReason, setOverReason] = useState('');
-  const [rejectReason, setRejectReason] = useState('');
   const [statementChecked, setStatementChecked] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -64,13 +50,8 @@ export default function PaymentDetail() {
     const body = await fetchPayment(id);
     const row = body.payment;
     setPayment(row);
-    setOverReason(row.overpaymentReason || '');
     setStatementChecked(Boolean(row.statementVerified));
-    setCustomerName(row.confirmed?.customerName || '');
-    setSiteNote(row.confirmed?.siteNote || '');
-    setInvoiceHint(row.confirmed?.invoiceHint || '');
-    setPaidAt(dateInputValue(row.confirmed?.paidAt || row.ai?.paidAt));
-    setAmount(row.confirmed?.amount != null ? String(row.confirmed.amount) : (row.ai?.amount != null ? String(row.ai.amount) : ''));
+    setQuery(row.confirmed?.customerName || '');
     const file = await fetchPaymentFile(id);
     setImageUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -88,10 +69,9 @@ export default function PaymentDetail() {
     };
   }, [id]);
 
-  // Keyword → unpaid Zoho invoices whose customer name (or invoice #) contains it.
   useEffect(() => {
     if (!canReview) return undefined;
-    const q = customerName.trim();
+    const q = query.trim();
     if (q.length < 2) {
       setSuggestions([]);
       setSuggesting(false);
@@ -114,7 +94,7 @@ export default function PaymentDetail() {
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [customerName, canReview]);
+  }, [query, canReview]);
 
   async function run(action) {
     setBusy(true);
@@ -131,20 +111,13 @@ export default function PaymentDetail() {
   }
 
   async function pickSuggestion(row) {
-    setCustomerName(row.customerName || '');
-    setInvoiceHint(row.invoiceNo || '');
+    setQuery(row.customerName || '');
     setShowSuggestions(false);
     setSuggestions([]);
     await run(async () => {
-      await updatePaymentHints(id, {
-        customerName: row.customerName || '',
-        siteNote,
-        invoiceHint: row.invoiceNo || '',
-        paidAt: paidAt || undefined,
-        amount: amount || undefined,
-      });
+      await updatePaymentHints(id, { customerName: row.customerName || '' });
       await matchPayment(id, { invoiceId: row.id });
-      setMessage(`Linked ${row.invoiceNo} · ${row.customerName}. Check the bank statement, then Record Payment.`);
+      setMessage(`Linked ${row.invoiceNo}`);
     });
   }
 
@@ -152,21 +125,14 @@ export default function PaymentDetail() {
   if (!payment) return <p className="message message-bad">{error}</p>;
 
   const invoice = payment.invoice;
-  const amountReceived = payment.amountReceived ?? payment.ai?.amount;
-  const amountApplied = payment.amountApplied;
-  const amountExcess = payment.amountExcess || 0;
   const editable = canReview && payment.status !== 'approved' && payment.status !== 'rejected';
+  const amount = payment.amountReceived ?? payment.ai?.amount;
 
   return (
     <>
       <p><Link to="/payments">← Payments</Link></p>
       <div className="page-head">
-        <div>
-          <h1>Record Payment</h1>
-          <p className="hint">
-            Match the unpaid Zoho invoice from the WhatsApp caption, check the bank statement, then Record Payment under Payments Received (marks the invoice paid or partial).
-          </p>
-        </div>
+        <h1>Payment</h1>
         <StatusBadge status={payment.status} />
       </div>
 
@@ -175,50 +141,42 @@ export default function PaymentDetail() {
 
       <div className="review-grid payment-match-grid">
         <section className="card">
-          <h2>Screenshot proof</h2>
           {imageUrl ? (
             <img className="payment-shot" src={imageUrl} alt="Bank transfer screenshot" />
           ) : (
             <p className="hint">Loading image…</p>
           )}
           <dl className="field-list">
-            <div><dt>Bank sender (AI)</dt><dd>{payment.ai?.sender || '—'}</dd></div>
-            <div><dt>Amount (AI)</dt><dd>{formatRupiah(payment.ai?.amount)}</dd></div>
+            <div><dt>From bank</dt><dd>{payment.ai?.sender || '—'}</dd></div>
+            <div><dt>Amount</dt><dd>{formatRupiah(amount)}</dd></div>
             <div><dt>Time</dt><dd>{formatWhen(payment.ai?.paidAt)}</dd></div>
-            <div><dt>Reference</dt><dd>{payment.ai?.reference || '—'}</dd></div>
-            <div><dt>Recipient</dt><dd>{payment.ai?.recipient || '—'}</dd></div>
-            <div><dt>Method</dt><dd>{payment.ai?.transferMethod || '—'}</dd></div>
+            <div><dt>Ref</dt><dd>{payment.ai?.reference || '—'}</dd></div>
           </dl>
         </section>
 
         <section className="card">
-          <h2>Payments Received</h2>
-
           {editable && (
-            <div className="stack-form">
+            <div className="stack-form" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}>
               <div className="name-suggest">
                 <label>
-                  Customer name (from caption)
+                  Find customer
                   <input
-                    value={customerName}
+                    value={query}
                     onChange={(event) => {
-                      setCustomerName(event.target.value);
+                      setQuery(event.target.value);
                       setShowSuggestions(true);
                     }}
                     onFocus={() => setShowSuggestions(true)}
-                    onBlur={() => {
-                      // Allow click on a suggestion before closing.
-                      setTimeout(() => setShowSuggestions(false), 150);
-                    }}
-                    placeholder="Type a keyword, e.g. form"
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                    placeholder="Type a name…"
                     autoComplete="off"
                   />
                 </label>
-                {showSuggestions && customerName.trim().length >= 2 && (
+                {showSuggestions && query.trim().length >= 2 && (
                   <div>
-                    {suggesting && <p className="hint">Searching unpaid invoices…</p>}
+                    {suggesting && <p className="hint">Searching…</p>}
                     {!suggesting && suggestions.length === 0 && (
-                      <p className="hint">No unpaid customer or invoice matches that keyword.</p>
+                      <p className="hint">No match</p>
                     )}
                     {suggestions.length > 0 && (
                       <ul className="name-suggest-list" role="listbox">
@@ -231,7 +189,7 @@ export default function PaymentDetail() {
                             >
                               <strong>{row.customerName || '—'}</strong>
                               <span className="hint">
-                                {row.invoiceNo} · {formatRupiah(row.remaining)} due
+                                {row.invoiceNo} · {formatRupiah(row.remaining)}
                               </span>
                             </button>
                           </li>
@@ -241,86 +199,17 @@ export default function PaymentDetail() {
                   </div>
                 )}
               </div>
-              <label>
-                Site / note (optional)
-                <input
-                  value={siteNote}
-                  onChange={(event) => setSiteNote(event.target.value)}
-                  placeholder="e.g. villa sudhamsu"
-                />
-              </label>
-              <label>
-                Invoice # hint (optional)
-                <input
-                  value={invoiceHint}
-                  onChange={(event) => setInvoiceHint(event.target.value)}
-                  placeholder="e.g. INV-065044"
-                />
-              </label>
-              <label>
-                Payment date
-                <input type="date" value={paidAt} onChange={(event) => setPaidAt(event.target.value)} />
-              </label>
-              <label>
-                Amount received (rupiah)
-                <input
-                  inputMode="numeric"
-                  value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                />
-              </label>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={busy}
-                onClick={() => run(async () => {
-                  await updatePaymentHints(id, {
-                    customerName,
-                    siteNote,
-                    invoiceHint,
-                    paidAt: paidAt || undefined,
-                    amount: amount || undefined,
-                  });
-                  setMessage('Hints saved. Match updated against Zoho unpaid invoices.');
-                })}
-              >
-                Save caption & re-match
-              </button>
             </div>
           )}
 
-          <dl className="field-list">
-            <div><dt>Customer (caption)</dt><dd>{payment.confirmed?.customerName || '—'}</dd></div>
-            <div><dt>Amount received</dt><dd>{formatRupiah(amountReceived)}</dd></div>
-            <div><dt>Applied to invoice</dt><dd>{formatRupiah(amountApplied)}</dd></div>
-            <div><dt>Amount in excess</dt><dd>{formatRupiah(amountExcess)}</dd></div>
-            <div><dt>Deposit to</dt><dd>OCBC PT TIGRIS (Zoho deposit account)</dd></div>
-            <div><dt>Payment mode</dt><dd>Bank Transfer</dd></div>
-          </dl>
-
-          <h3>Matched invoice</h3>
           {invoice ? (
             <dl className="field-list">
               <div><dt>Invoice</dt><dd>{invoice.invoiceNo}</dd></div>
               <div><dt>Customer</dt><dd>{invoice.customer?.name || '—'}</dd></div>
-              <div><dt>Amount due</dt><dd>{formatRupiah(invoice.remaining)}</dd></div>
-              <div><dt>Status</dt><dd><StatusBadge status={invoice.status === 'paid' ? 'confirmed' : invoice.status} /></dd></div>
-              <div><dt>Due</dt><dd>{formatWhen(invoice.dueDate)}</dd></div>
+              <div><dt>Due</dt><dd>{formatRupiah(invoice.remaining)}</dd></div>
             </dl>
           ) : (
-            <p className="hint">No invoice linked yet. Type a customer keyword above to pick an unpaid invoice.</p>
-          )}
-
-          <div className="match-meta">
-            <StatusBadge status={payment.matchConfidence || 'unmatched'} />
-            <StatusBadge status={payment.matchType || 'none'} />
-            {payment.statementVerified && <StatusBadge status="verified" />}
-          </div>
-          {(payment.matchReasons || []).map((reason) => (
-            <p key={reason} className="hint">{reason}</p>
-          ))}
-          {(payment.flags || []).includes('possibleDuplicate') && (
-            <p className="message message-warn">Possible duplicate of another recent transfer.</p>
+            <p className="hint">Pick a customer above.</p>
           )}
 
           {editable && (
@@ -332,56 +221,31 @@ export default function PaymentDetail() {
                   disabled={busy || !payment.matchedInvoiceId}
                   onChange={(event) => setStatementChecked(event.target.checked)}
                 />
-                I checked this transfer on the bank statement
+                Checked on bank statement
               </label>
-              {!payment.matchedInvoiceId && (
-                <p className="hint">Link an unpaid invoice (type a customer keyword above) before recording.</p>
-              )}
-
-              {(payment.matchType === 'over' || amountExcess > 0) && (
-                <>
-                  <p className="message message-warn">
-                    Transfer is larger than amount due. Zoho will apply {formatRupiah(amountApplied)} to the invoice
-                    and leave {formatRupiah(amountExcess)} as unused excess.
-                  </p>
-                  <label>
-                    Excess note (optional)
-                    <input
-                      value={overReason}
-                      onChange={(event) => setOverReason(event.target.value)}
-                      placeholder="Optional note for accounts"
-                    />
-                  </label>
-                </>
-              )}
 
               <button
                 type="button"
                 className="btn btn-primary"
                 disabled={busy || !payment.matchedInvoiceId}
                 onClick={() => run(async () => {
-                  if (!payment.matchedInvoiceId) {
-                    throw new Error('Link an unpaid Zoho invoice first.');
-                  }
-                  if (!statementChecked) {
-                    throw new Error('Tick “I checked this transfer on the bank statement” before recording.');
-                  }
-                  if (!payment.statementVerified) {
-                    await verifyPayment(id);
-                  }
-                  await approvePayment(id, { overpaymentReason: overReason });
-                  setMessage('Recorded in Zoho Payments Received. Invoice marked paid or partial.');
+                  if (!payment.matchedInvoiceId) throw new Error('Pick a customer first.');
+                  if (!statementChecked) throw new Error('Tick the bank statement check first.');
+                  if (!payment.statementVerified) await verifyPayment(id);
+                  await approvePayment(id, {});
+                  setMessage('Recorded in Zoho.');
                 })}
               >
-                Record Payment in Zoho
+                Record in Zoho
               </button>
-              <p className="hint">
-                Creates a Payments Received entry and marks the invoice paid or partial. Screenshot alone is not enough — confirm the statement checkbox.
-              </p>
 
               <label>
-                Reject reason
-                <input value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} />
+                Reject
+                <input
+                  value={rejectReason}
+                  onChange={(event) => setRejectReason(event.target.value)}
+                  placeholder="Reason"
+                />
               </label>
               <button
                 type="button"
@@ -389,7 +253,7 @@ export default function PaymentDetail() {
                 disabled={busy || !rejectReason.trim()}
                 onClick={() => run(async () => {
                   await rejectPayment(id, rejectReason);
-                  setMessage('Payment rejected.');
+                  setMessage('Rejected.');
                 })}
               >
                 Reject
@@ -397,10 +261,8 @@ export default function PaymentDetail() {
             </div>
           )}
 
-          {payment.status === 'approved' && payment.zohoPaymentId && (
-            <p className="message message-ok">
-              Zoho payment id {payment.zohoPaymentId}. Appears under Sales → Payments Received.
-            </p>
+          {payment.status === 'approved' && (
+            <p className="message message-ok">Saved in Zoho Payments Received.</p>
           )}
         </section>
       </div>

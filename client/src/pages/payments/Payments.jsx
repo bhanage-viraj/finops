@@ -1,13 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  approvePayment,
-  fetchPayments,
-  uploadPayments,
-  verifyPayment,
-} from '../../api/payments.js';
+import { fetchPayments, uploadPayments } from '../../api/payments.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
-import { useAuth } from '../../auth/AuthContext.jsx';
 import { compressImage } from '../../utils/compressImage.js';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 
@@ -26,24 +20,11 @@ function formatWhen(value) {
   }
 }
 
-function isException(payment) {
-  if (payment.status === 'failed' || payment.status === 'rejected') return true;
-  if ((payment.flags || []).includes('possibleDuplicate') || (payment.flags || []).includes('unidentified')) return true;
-  if (!payment.matchedInvoiceId && payment.status !== 'approved') return true;
-  if (['partial', 'over', 'none'].includes(payment.matchType)) return true;
-  if (payment.matchConfidence === 'low') return true;
-  return false;
-}
-
 export default function Payments() {
-  const { user } = useAuth();
-  const canReview = user?.role === 'accountant' || user?.role === 'admin';
   const [payments, setPayments] = useState([]);
-  const [selected, setSelected] = useState(() => new Set());
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [overReasons, setOverReasons] = useState({});
 
   function load() {
     fetchPayments()
@@ -57,29 +38,13 @@ export default function Payments() {
     return () => clearInterval(timer);
   }, []);
 
-  const suggested = useMemo(
-    () => payments.filter((p) => !isException(p) && p.status !== 'approved' && p.status !== 'rejected'),
-    [payments],
-  );
-  const exceptions = useMemo(() => payments.filter(isException), [payments]);
-  const approved = useMemo(() => payments.filter((p) => p.status === 'approved'), [payments]);
-
-  function toggle(id) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
   async function onUpload(event) {
     const files = [...(event.target.files || [])];
     event.target.value = '';
     if (!files.length || busy) return;
     setBusy(true);
     setError('');
-    setMessage('Uploading screenshots…');
+    setMessage('Uploading…');
     try {
       const prepared = [];
       for (const file of files) prepared.push(await compressImage(file));
@@ -87,8 +52,8 @@ export default function Payments() {
       const saved = result.payments?.length || 0;
       const rejected = result.rejected?.length || 0;
       setMessage(rejected
-        ? `${saved} matched. ${rejected} need attention: ${result.rejected.map((r) => r.error).join(' ')}`
-        : `${saved} screenshot${saved === 1 ? '' : 's'} read and matched.`);
+        ? `${saved} saved. ${rejected} failed: ${result.rejected.map((r) => r.error).join(' ')}`
+        : `${saved} uploaded.`);
       load();
     } catch (err) {
       setError(err.message || 'Upload failed.');
@@ -98,140 +63,18 @@ export default function Payments() {
     }
   }
 
-  async function verifySelected() {
-    if (!canReview || selected.size === 0) return;
-    setBusy(true);
-    setError('');
-    try {
-      for (const id of selected) {
-        await verifyPayment(id);
-      }
-      setMessage('Bank statement check saved. Approve to mark the invoice paid.');
-      setSelected(new Set());
-      load();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function approveSelected() {
-    if (!canReview || selected.size === 0) return;
-    setBusy(true);
-    setError('');
-    try {
-      for (const id of selected) {
-        const payment = payments.find((p) => p.id === id);
-        const payload = {};
-        if (payment?.matchType === 'over') {
-          payload.overpaymentReason = overReasons[id] || '';
-        }
-        await approvePayment(id, payload);
-      }
-      setMessage('Recorded in Zoho Payments Received. Invoice marked paid or partial.');
-      setSelected(new Set());
-      load();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function row(payment) {
-    const checked = selected.has(payment.id);
-    return (
-      <tr key={payment.id} className={checked ? 'row-selected' : undefined}>
-        <td>
-          {canReview && payment.status !== 'approved' && payment.status !== 'rejected' && (
-            <input
-              type="checkbox"
-              checked={checked}
-              aria-label={`Select ${payment.ai?.sender || payment.originalName}`}
-              onChange={() => toggle(payment.id)}
-            />
-          )}
-        </td>
-        <td>
-          <Link to={`/payments/${payment.id}`}>
-            {payment.confirmed?.customerName || payment.ai?.sender || '—'}
-          </Link>
-          <div className="hint">
-            {payment.confirmed?.customerName && payment.ai?.sender
-              ? `Bank: ${payment.ai.sender}`
-              : (payment.ai?.reference || payment.originalName)}
-          </div>
-        </td>
-        <td>{formatRupiah(payment.ai?.amount)}</td>
-        <td>{formatWhen(payment.ai?.paidAt)}</td>
-        <td>
-          {payment.invoice ? (
-            <>
-              <Link to={`/payments/${payment.id}`}>{payment.invoice.invoiceNo}</Link>
-              <div className="hint">{payment.invoice.customer?.name}</div>
-            </>
-          ) : '—'}
-        </td>
-        <td><StatusBadge status={payment.matchConfidence || 'unmatched'} /></td>
-        <td>
-          {payment.statementVerified
-            ? <StatusBadge status="verified" />
-            : <span className="hint">Not checked</span>}
-        </td>
-        <td>
-          <StatusBadge status={payment.matchType === 'partial' || payment.matchType === 'over' ? payment.matchType : payment.status} />
-          {payment.matchType === 'over' && canReview && (
-            <input
-              className="input-compact"
-              placeholder="Overpayment reason"
-              value={overReasons[payment.id] || ''}
-              onChange={(event) => setOverReasons((prev) => ({ ...prev, [payment.id]: event.target.value }))}
-            />
-          )}
-        </td>
-      </tr>
-    );
-  }
+  const open = payments.filter((p) => p.status !== 'approved' && p.status !== 'rejected');
+  const done = payments.filter((p) => p.status === 'approved' || p.status === 'rejected');
 
   return (
     <>
       <div className="page-head">
-        <div>
-          <h1>Payments</h1>
-          <p className="hint">
-            Bank screenshot proofs → match unpaid Zoho invoice → Record Payment in Payments Received. Documents and Follow-up stay separate. Screenshot alone never writes Zoho.
-          </p>
-        </div>
-        {canReview && (
-          <div className="page-actions">
-            <button type="button" className="btn btn-secondary" disabled={busy || selected.size === 0} onClick={verifySelected}>
-              Check statement ({selected.size})
-            </button>
-            <button type="button" className="btn btn-primary" disabled={busy || selected.size === 0} onClick={approveSelected}>
-              Record Payment ({selected.size})
-            </button>
-          </div>
-        )}
+        <h1>Payments</h1>
       </div>
 
-      <section
-        className="card capture-card"
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={async (event) => {
-          event.preventDefault();
-          const files = [...event.dataTransfer.files];
-          if (!files.length) return;
-          const fake = { target: { files, value: '' } };
-          await onUpload(fake);
-        }}
-      >
-        <h2>Payment proofs</h2>
-        <p className="hint">
-          Upload the WhatsApp bank screenshot. On the detail page, paste the caption customer name (often different from the bank sender), then Record Payment.
-        </p>
+      <section className="card capture-card">
         <label className="btn btn-primary">
-          {busy ? 'Working…' : 'Upload screenshots'}
+          {busy ? 'Working…' : 'Upload screenshot'}
           <input type="file" accept="image/*" multiple disabled={busy} onChange={onUpload} />
         </label>
       </section>
@@ -239,68 +82,65 @@ export default function Payments() {
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
 
-      <h2>Suggested matches</h2>
-      {suggested.length === 0 ? (
-        <p className="hint">No high-confidence matches waiting.</p>
+      {open.length === 0 ? (
+        <p className="hint">No open payments.</p>
       ) : (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th aria-label="Select" />
-                <th>From screenshot</th>
+                <th>Customer / sender</th>
                 <th>Amount</th>
-                <th>Time</th>
-                <th>Matched invoice</th>
-                <th>Confidence</th>
-                <th>Statement</th>
-                <th>Result</th>
+                <th>Invoice</th>
+                <th>Status</th>
               </tr>
             </thead>
-            <tbody>{suggested.map(row)}</tbody>
+            <tbody>
+              {open.map((payment) => (
+                <tr key={payment.id}>
+                  <td>
+                    <Link to={`/payments/${payment.id}`}>
+                      {payment.confirmed?.customerName || payment.ai?.sender || '—'}
+                    </Link>
+                    <div className="hint">{formatWhen(payment.ai?.paidAt)}</div>
+                  </td>
+                  <td>{formatRupiah(payment.amountReceived ?? payment.ai?.amount)}</td>
+                  <td>{payment.invoice?.invoiceNo || '—'}</td>
+                  <td><StatusBadge status={payment.status} /></td>
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
       )}
 
-      <h2>Needs your review</h2>
-      {exceptions.length === 0 ? (
-        <p className="hint">No exceptions right now.</p>
-      ) : (
-        <div className="card">
-          <ul className="exception-list">
-            {exceptions.map((payment) => (
-              <li key={payment.id}>
-                <div>
-                  <strong>{payment.confirmed?.customerName || payment.ai?.sender || payment.originalName || 'Unread screenshot'}</strong>
-                  <div className="hint">
-                    {formatRupiah(payment.ai?.amount)} · {payment.matchReasons?.[0] || payment.failureMessage || 'Needs a manual match'}
-                  </div>
-                </div>
-                <Link className="btn btn-secondary" to={`/payments/${payment.id}`}>Open</Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {approved.length > 0 && (
+      {done.length > 0 && (
         <>
-          <h2>Approved (in-app)</h2>
+          <h2>Done</h2>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th aria-label="Select" />
-                  <th>From screenshot</th>
+                  <th>Customer / sender</th>
                   <th>Amount</th>
-                  <th>Time</th>
-                  <th>Matched invoice</th>
-                  <th>Confidence</th>
-                  <th>Statement</th>
-                  <th>Result</th>
+                  <th>Invoice</th>
+                  <th>Status</th>
                 </tr>
               </thead>
-              <tbody>{approved.map(row)}</tbody>
+              <tbody>
+                {done.map((payment) => (
+                  <tr key={payment.id}>
+                    <td>
+                      <Link to={`/payments/${payment.id}`}>
+                        {payment.confirmed?.customerName || payment.ai?.sender || '—'}
+                      </Link>
+                    </td>
+                    <td>{formatRupiah(payment.amountReceived ?? payment.ai?.amount)}</td>
+                    <td>{payment.invoice?.invoiceNo || '—'}</td>
+                    <td><StatusBadge status={payment.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
             </table>
           </div>
         </>
