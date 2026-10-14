@@ -41,11 +41,9 @@ export function formatDueDateId(iso) {
 
 /** Editable overdue reminder. Staff send it from WhatsApp themselves. */
 export function draftWhatsAppMessage(invoice) {
-  const name = invoice.customerName || '';
   const due = formatDueDateId(invoice.dueDate) || '—';
-  const greeting = name ? `Hi, Mr./Mrs ${name},` : 'Hi, Mr./Mrs,';
   return (
-    `${greeting}\n\n`
+    'Hi, Mr./Mrs,\n\n'
     + 'We hope you are enjoying your water as always!\n\n'
     + `A kind reminder that payment for your latest delivery is due invoice on ${due}. `
     + 'Please feel free to transfer at your convenience using the details below.\n\n'

@@ -31,18 +31,11 @@ test('the WhatsApp draft uses the English reminder with due date and bank detail
     balance: 250000,
     dueDate: '2026-09-15',
   });
-  assert.match(text, /Hi, Mr\.\/Mrs Budi,/);
+  assert.match(text, /^Hi, Mr\.\/Mrs,/);
+  assert.doesNotMatch(text, /Mr\.\/Mrs Budi/);
   assert.match(text, /enjoying your water/);
   assert.match(text, /due invoice on 15\/09\/2026/);
   assert.match(text, /PT Tigris Inovatif Solusi/);
   assert.match(text, /7228-0000-0522/);
   assert.match(text, /OCBC NISP/);
-});
-
-test('the WhatsApp draft still works without a customer name', () => {
-  const text = draftWhatsAppMessage({
-    dueDate: '2026-09-15',
-  });
-  assert.match(text, /Hi, Mr\.\/Mrs,/);
-  assert.match(text, /15\/09\/2026/);
 });
