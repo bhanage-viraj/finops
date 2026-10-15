@@ -218,7 +218,7 @@ export default function FollowUp() {
   const [customers, setCustomers] = useState([]);
   const [reminderText, setReminderText] = useState(null);
   const [asOf, setAsOf] = useState('');
-  const [view, setView] = useState('customer');
+  const [view, setView] = useState('due');
   // "inv:<invoiceId>" for one invoice, "cust:<key>" for a combined reminder.
   const [openKey, setOpenKey] = useState('');
   const [openIds, setOpenIds] = useState([]);
@@ -608,7 +608,7 @@ export default function FollowUp() {
     <>
       <h1>Follow-up</h1>
       <p className="hint">
-        Overdue invoices from Zoho Books. By customer: tick invoices or send the full amount in one message with all PDFs.
+        Overdue invoices from Zoho Books, grouped by due date (oldest due first). Switch to By customer to tick invoices or send the full amount in one message with all PDFs.
         Read only — nothing is written back to Zoho.
         {asOf ? ` As of ${displayDate(asOf)}.` : ''}
       </p>
@@ -624,19 +624,19 @@ export default function FollowUp() {
             <div className="actions followup-view-toggle" role="group" aria-label="Group by">
               <button
                 type="button"
-                className={`btn ${view === 'customer' ? 'btn-primary' : 'btn-secondary'}`}
-                aria-pressed={view === 'customer'}
-                onClick={() => { setView('customer'); closePanel(); }}
-              >
-                By customer
-              </button>
-              <button
-                type="button"
                 className={`btn ${view === 'due' ? 'btn-primary' : 'btn-secondary'}`}
                 aria-pressed={view === 'due'}
                 onClick={() => { setView('due'); closePanel(); }}
               >
                 By due date
+              </button>
+              <button
+                type="button"
+                className={`btn ${view === 'customer' ? 'btn-primary' : 'btn-secondary'}`}
+                aria-pressed={view === 'customer'}
+                onClick={() => { setView('customer'); closePanel(); }}
+              >
+                By customer
               </button>
             </div>
           </div>
