@@ -284,6 +284,69 @@ a.btn {
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
 }
+.payment-shot-skeleton {
+  width: 100%;
+  min-height: 220px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: linear-gradient(90deg, var(--bg) 0%, var(--accent-soft) 50%, var(--bg) 100%);
+  background-size: 200% 100%;
+  animation: payment-shimmer 1.4s ease-in-out infinite;
+}
+.payment-progress-card { margin-bottom: var(--space-4); }
+.payment-steps {
+  list-style: none;
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.payment-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--neutral-bg);
+  color: var(--neutral-ink);
+  font-size: var(--text-table);
+  font-weight: 600;
+}
+.payment-step-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.payment-step.is-active {
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+}
+.payment-step.is-done {
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+}
+.payment-pulse-text {
+  color: var(--muted);
+  font-weight: 600;
+  animation: payment-pulse 1.2s ease-in-out infinite;
+}
+.payment-reading-row td { background: var(--accent-soft); }
+@keyframes payment-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+@keyframes payment-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
 .field-list {
   display: grid;
   gap: var(--space-2);
@@ -445,6 +508,7 @@ a.btn {
   .stat-grid, .review-grid, .line-grid { grid-template-columns: 1fr; }
   /* Follow-up keeps the table on phone (no separate card list). */
   .table-wrap.followup-list { display: block; }
+  .payment-steps { grid-template-columns: 1fr; }
   .followup-preview-frame { max-height: 220px; }
   .followup-preview-frame iframe { min-height: 180px; height: 220px; }
   .followup-preview-head .btn,

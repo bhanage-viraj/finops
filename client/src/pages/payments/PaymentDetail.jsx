@@ -28,6 +28,39 @@ function formatWhen(value) {
   }
 }
 
+function isReading(status) {
+  return status === 'uploaded' || status === 'processing';
+}
+
+function ReadSteps({ status, hasMatch, hasAmount }) {
+  const step = status === 'failed' ? 0
+    : status === 'uploaded' ? 1
+      : status === 'processing' ? 2
+        : hasAmount || hasMatch ? 3 : 2;
+  const items = [
+    { n: 1, label: 'Saved' },
+    { n: 2, label: 'Reading screenshot' },
+    { n: 3, label: 'Ready to record' },
+  ];
+  return (
+    <ol className="payment-steps" aria-label="Payment progress">
+      {items.map((item) => {
+        const done = step > item.n || (step === item.n && item.n === 3);
+        const active = step === item.n && item.n < 3;
+        return (
+          <li
+            key={item.n}
+            className={`payment-step${done ? ' is-done' : ''}${active ? ' is-active' : ''}`}
+          >
+            <span className="payment-step-mark" aria-hidden="true">{done ? '✓' : item.n}</span>
+            <span>{item.label}{active ? '…' : ''}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export default function PaymentDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -42,12 +75,15 @@ export default function PaymentDetail() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const suggestSeq = useRef(0);
+  const startedAt = useRef(Date.now());
+  const [elapsed, setElapsed] = useState(0);
 
-  async function load() {
+  async function load({ withFile = true } = {}) {
     const body = await fetchPayment(id);
     const row = body.payment;
     setPayment(row);
-    setQuery(row.confirmed?.customerName || row.invoice?.customer?.name || '');
+    setQuery((prev) => prev || row.confirmed?.customerName || row.invoice?.customer?.name || '');
+    if (!withFile) return;
     const file = await fetchPaymentFile(id);
     setImageUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -56,6 +92,7 @@ export default function PaymentDetail() {
   }
 
   useEffect(() => {
+    startedAt.current = Date.now();
     load().catch((err) => setError(err.message));
     return () => {
       setImageUrl((prev) => {
@@ -66,17 +103,30 @@ export default function PaymentDetail() {
   }, [id]);
 
   useEffect(() => {
-    if (!payment || !['uploaded', 'processing'].includes(payment.status)) return undefined;
+    if (!payment || !isReading(payment.status)) return undefined;
     const timer = setInterval(() => {
       fetchPayment(id)
         .then((body) => {
           setPayment(body.payment);
-          setQuery(body.payment.confirmed?.customerName || body.payment.invoice?.customer?.name || '');
+          if (body.payment.confirmed?.customerName) {
+            setQuery((prev) => prev || body.payment.confirmed.customerName);
+          }
         })
         .catch(() => {});
-    }, 2000);
+    }, 1500);
     return () => clearInterval(timer);
   }, [id, payment?.status]);
+
+  useEffect(() => {
+    if (!payment || !isReading(payment.status)) {
+      setElapsed(0);
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [payment?.status]);
 
   useEffect(() => {
     if (!canReview || payment?.status === 'approved') return undefined;
@@ -111,7 +161,7 @@ export default function PaymentDetail() {
     setMessage('');
     try {
       await action();
-      await load();
+      await load({ withFile: false });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -126,6 +176,9 @@ export default function PaymentDetail() {
     await run(async () => {
       await updatePaymentHints(id, { customerName: row.customerName || '' });
       await matchPayment(id, { invoiceId: row.id });
+      setMessage(isReading(payment?.status)
+        ? 'Customer saved. Amount will fill in when reading finishes.'
+        : 'Customer matched.');
     });
   }
 
@@ -133,9 +186,14 @@ export default function PaymentDetail() {
   if (!payment) return <p className="message message-bad">{error}</p>;
 
   const invoice = payment.invoice;
-  const editable = canReview
-    && !['approved', 'rejected', 'uploaded', 'processing', 'failed'].includes(payment.status);
+  const reading = isReading(payment.status);
+  const canFindCustomer = canReview && !['approved', 'rejected', 'failed'].includes(payment.status);
+  const canRecord = canReview
+    && !reading
+    && !['approved', 'rejected', 'failed'].includes(payment.status)
+    && Boolean(payment.matchedInvoiceId);
   const amount = payment.amountReceived ?? payment.ai?.amount;
+  const hasAmount = amount != null;
 
   return (
     <>
@@ -147,11 +205,27 @@ export default function PaymentDetail() {
 
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
-      {['uploaded', 'processing'].includes(payment.status) && (
-        <p className="message message-warn">Reading the screenshot. This page updates when it finishes.</p>
-      )}
       {payment.status === 'failed' && payment.failureMessage && (
         <p className="message message-bad">{payment.failureMessage}</p>
+      )}
+
+      {(reading || payment.status === 'read' || payment.status === 'matched') && (
+        <section className="card payment-progress-card">
+          <ReadSteps
+            status={payment.status}
+            hasMatch={Boolean(payment.matchedInvoiceId)}
+            hasAmount={hasAmount}
+          />
+          {reading && (
+            <p className="hint">
+              AI is reading the bank screenshot{elapsed > 0 ? ` (${elapsed}s)` : ''}.
+              Find the customer below now — do not wait for the amount.
+            </p>
+          )}
+          {!reading && payment.matchedInvoiceId && hasAmount && (
+            <p className="hint">Ready. Check the amount, then record in Zoho.</p>
+          )}
+        </section>
       )}
 
       <div className="review-grid payment-match-grid">
@@ -159,17 +233,32 @@ export default function PaymentDetail() {
           {imageUrl ? (
             <img className="payment-shot" src={imageUrl} alt="Bank transfer screenshot" />
           ) : (
-            <p className="hint">Loading image…</p>
+            <div className="payment-shot-skeleton" aria-hidden="true" />
           )}
           <dl className="field-list">
-            <div><dt>From bank</dt><dd>{payment.ai?.sender || '—'}</dd></div>
-            <div><dt>Amount</dt><dd>{formatRupiah(amount)}</dd></div>
-            <div><dt>Time</dt><dd>{formatWhen(payment.ai?.paidAt)}</dd></div>
+            <div>
+              <dt>From bank</dt>
+              <dd className={!payment.ai?.sender && reading ? 'payment-pulse-text' : undefined}>
+                {payment.ai?.sender || (reading ? 'Reading…' : '—')}
+              </dd>
+            </div>
+            <div>
+              <dt>Amount</dt>
+              <dd className={!hasAmount && reading ? 'payment-pulse-text' : undefined}>
+                {hasAmount ? formatRupiah(amount) : (reading ? 'Reading…' : '—')}
+              </dd>
+            </div>
+            <div>
+              <dt>Time</dt>
+              <dd className={!payment.ai?.paidAt && reading ? 'payment-pulse-text' : undefined}>
+                {payment.ai?.paidAt ? formatWhen(payment.ai.paidAt) : (reading ? 'Reading…' : '—')}
+              </dd>
+            </div>
           </dl>
         </section>
 
         <section className="card">
-          {editable && (
+          {canFindCustomer && (
             <div className="name-suggest">
               <label>
                 Find customer
@@ -181,10 +270,14 @@ export default function PaymentDetail() {
                   }}
                   onFocus={() => setShowSuggestions(true)}
                   onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                  placeholder="Type a name…"
+                  placeholder="Type a name while it reads…"
                   autoComplete="off"
+                  autoFocus={reading}
                 />
               </label>
+              {reading && (
+                <p className="hint">You can pick the customer before the AI finishes.</p>
+              )}
               {showSuggestions && query.trim().length >= 2 && (
                 <div>
                   {suggesting && <p className="hint">Searching…</p>}
@@ -218,19 +311,19 @@ export default function PaymentDetail() {
               <div><dt>Customer</dt><dd>{invoice.customer?.name || '—'}</dd></div>
               <div><dt>Due</dt><dd>{formatRupiah(invoice.remaining)}</dd></div>
             </dl>
-          ) : editable ? (
-            <p className="hint">Pick a customer.</p>
+          ) : canFindCustomer ? (
+            <p className="hint">{reading ? 'Pick a customer now.' : 'Pick a customer.'}</p>
           ) : null}
 
-          {editable && (
+          {canRecord && (
             <div className="stack-form">
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={busy || !payment.matchedInvoiceId}
+                disabled={busy || !payment.matchedInvoiceId || !hasAmount}
                 onClick={() => run(async () => {
                   if (!payment.matchedInvoiceId) throw new Error('Pick a customer first.');
-                  // One click = statement confirmed + Payments Received in Zoho.
+                  if (!hasAmount) throw new Error('Wait for the amount to finish reading.');
                   if (!payment.statementVerified) await verifyPayment(id);
                   await approvePayment(id, {});
                   setMessage('Recorded in Zoho.');
@@ -238,7 +331,16 @@ export default function PaymentDetail() {
               >
                 {busy ? 'Recording…' : 'Record in Zoho'}
               </button>
+              {!hasAmount && (
+                <p className="hint">Record unlocks when the amount is read.</p>
+              )}
             </div>
+          )}
+
+          {reading && payment.matchedInvoiceId && (
+            <p className="message message-ok">
+              Customer ready. Record unlocks when the amount appears.
+            </p>
           )}
 
           {payment.status === 'approved' && (

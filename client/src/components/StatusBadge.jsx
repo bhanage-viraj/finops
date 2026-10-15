@@ -44,8 +44,8 @@ const LABEL = {
   already_paid: 'Already paid',
   duplicate: 'Duplicate',
   unmatched: 'Unmatched',
-  processing: 'Processing',
-  uploaded: 'Awaiting',
+  processing: 'Reading…',
+  uploaded: 'Saved',
   failed: 'Failed',
   rejected: 'Rejected',
 };

@@ -285,7 +285,11 @@ export async function processPayment(id, env) {
       mimeType: payment.mimeType,
       bytes,
     });
-    payment.ai = {
+
+    // Reload so a customer pick made while AI ran is not overwritten.
+    const latest = await BankPayment.findById(id);
+    if (!latest) return null;
+    latest.ai = {
       sender: extraction.sender,
       amount: extraction.amount,
       paidAt: extraction.paidAt,
@@ -298,61 +302,84 @@ export async function processPayment(id, env) {
       raw: extraction.raw,
     };
 
-    let zohoInvoices = [];
-    let zohoError = '';
-    try {
-      zohoInvoices = await loadZohoInvoices(env);
-    } catch (error) {
-      zohoError = error.message || 'Zoho invoices could not be loaded.';
-    }
-
-    if (zohoError) {
-      payment.matchReasons = [zohoError];
-      payment.flags = ['unidentified'];
-      payment.matchConfidence = 'low';
-      payment.matchType = 'none';
-      payment.status = 'read';
+    if (latest.zohoInvoiceId) {
+      // Accountant already matched; only refresh amount-based match type.
+      const amount = effectiveAmount(latest);
+      const remaining = latest.matchedInvoice?.remaining;
+      if (amount != null && Number.isInteger(remaining)) {
+        if (amount < remaining) latest.matchType = 'partial';
+        else if (amount > remaining) latest.matchType = 'over';
+        else latest.matchType = 'exact';
+      }
+      if (!['matched', 'verified', 'approved'].includes(latest.status)) {
+        latest.status = latest.statementVerified ? 'verified' : 'matched';
+      }
     } else {
-      const match = await matchPayment({
-        sender: extraction.sender,
-        customerName: payment.confirmed?.customerName || extraction.sender,
-        invoiceNumberHint: payment.confirmed?.invoiceHint || null,
-        amount: payment.confirmed?.amount ?? extraction.amount,
-        paidAt: payment.confirmed?.paidAt || extraction.paidAt,
-        invoices: zohoInvoices,
-        excludePaymentId: payment._id,
-      });
-      applyMatchResult(payment, match);
+      let zohoInvoices = [];
+      let zohoError = '';
+      try {
+        zohoInvoices = await loadZohoInvoices(env);
+      } catch (error) {
+        zohoError = error.message || 'Zoho invoices could not be loaded.';
+      }
+
+      if (zohoError) {
+        latest.matchReasons = [zohoError];
+        latest.flags = ['unidentified'];
+        latest.matchConfidence = 'low';
+        latest.matchType = 'none';
+        latest.status = 'read';
+      } else {
+        const match = await matchPayment({
+          sender: extraction.sender,
+          customerName: latest.confirmed?.customerName || extraction.sender,
+          invoiceNumberHint: latest.confirmed?.invoiceHint || null,
+          amount: latest.confirmed?.amount ?? extraction.amount,
+          paidAt: latest.confirmed?.paidAt || extraction.paidAt,
+          invoices: zohoInvoices,
+          excludePaymentId: latest._id,
+        });
+        applyMatchResult(latest, match);
+      }
     }
 
-    await payment.save();
+    await latest.save();
     await writeAudit({
-      userId: payment.uploadedBy,
+      userId: latest.uploadedBy,
       action: 'read',
       entity: 'bankPayments',
-      entityId: payment._id,
+      entityId: latest._id,
       after: {
-        status: payment.status,
-        amount: payment.ai.amount,
-        matchType: payment.matchType,
-        zohoInvoiceId: payment.zohoInvoiceId,
+        status: latest.status,
+        amount: latest.ai.amount,
+        matchType: latest.matchType,
+        zohoInvoiceId: latest.zohoInvoiceId,
       },
     });
-    return payment;
+    return latest;
   } catch (error) {
-    payment.status = 'failed';
-    payment.failureMessage = error.code === 'AI_NOT_CONFIGURED'
+    const failed = await BankPayment.findById(id);
+    if (!failed) return null;
+    // Keep a manual match if the accountant already picked an invoice during the wait.
+    if (failed.zohoInvoiceId) {
+      failed.failureMessage = error.message || 'The screenshot could not be read. Enter the amount by hand if needed.';
+      failed.status = failed.statementVerified ? 'verified' : 'matched';
+      await failed.save();
+      return failed;
+    }
+    failed.status = 'failed';
+    failed.failureMessage = error.code === 'AI_NOT_CONFIGURED'
       ? error.message
       : (error.message || 'The screenshot could not be read.');
-    await payment.save();
+    await failed.save();
     await writeAudit({
-      userId: payment.uploadedBy,
+      userId: failed.uploadedBy,
       action: 'read_failed',
       entity: 'bankPayments',
-      entityId: payment._id,
-      after: { status: 'failed', failureMessage: payment.failureMessage },
+      entityId: failed._id,
+      after: { status: 'failed', failureMessage: failed.failureMessage },
     });
-    return payment;
+    return failed;
   }
 }
 
@@ -494,7 +521,12 @@ export async function setPaymentMatch(id, user, body = {}, env) {
   payment.matchConfidence = 'high';
   payment.matchReasons = ['Matched manually by an accountant.'];
   payment.flags = (payment.flags || []).filter((f) => f !== 'unidentified');
-  payment.status = payment.statementVerified ? 'verified' : 'matched';
+  // Keep "processing" so the UI still shows AI progress; finish when AI completes.
+  if (!['uploaded', 'processing'].includes(payment.status)) {
+    payment.status = payment.statementVerified ? 'verified' : 'matched';
+  }
+  if (!payment.confirmed) payment.confirmed = {};
+  payment.confirmed.customerName = invoice.customerName || payment.confirmed.customerName;
   await payment.save();
 
   await writeAudit({
@@ -557,7 +589,11 @@ export async function updatePaymentHints(id, user, body = {}, env) {
   if (body.amount !== undefined) payment.confirmed.amount = hints.amount;
   if (body.paidAt !== undefined) payment.confirmed.paidAt = hints.paidAt;
 
-  await rematchPaymentDoc(payment, env);
+  // While AI is still reading, only save the caption — rematch after amount exists.
+  const stillReading = ['uploaded', 'processing'].includes(payment.status);
+  if (!stillReading) {
+    await rematchPaymentDoc(payment, env);
+  }
   await payment.save();
   await writeAudit({
     userId: user.id,
@@ -571,6 +607,7 @@ export async function updatePaymentHints(id, user, body = {}, env) {
       paidAt: payment.confirmed.paidAt,
       zohoInvoiceId: payment.zohoInvoiceId,
       matchConfidence: payment.matchConfidence,
+      deferredRematch: stillReading,
     },
   });
   return serializePayment(payment);
