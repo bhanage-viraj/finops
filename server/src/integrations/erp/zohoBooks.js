@@ -366,7 +366,7 @@ export async function createCustomerPayment({
   if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
   const payload = {
     customer_id: customerId,
-    payment_mode: String(payment.paymentMode || 'banktransfer').slice(0, 100),
+    payment_mode: String(payment.paymentMode || 'Bank Transfer').slice(0, 100),
     amount: payment.amount,
     date: payment.date,
     reference_number: String(payment.referenceNumber || '').slice(0, 100),

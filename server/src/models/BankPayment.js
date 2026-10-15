@@ -12,8 +12,9 @@ const bankPaymentSchema = new Schema({
   status: {
     type: String,
     required: true,
-    enum: ['read', 'matched', 'verified', 'approved', 'rejected', 'failed'],
-    default: 'read',
+    // uploaded/processing: file saved, AI+match still running (keeps upload fast).
+    enum: ['uploaded', 'processing', 'read', 'matched', 'verified', 'approved', 'rejected', 'failed'],
+    default: 'uploaded',
   },
   // AI output is never overwritten after the first successful read.
   ai: {

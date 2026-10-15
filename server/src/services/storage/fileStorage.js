@@ -33,6 +33,14 @@ export function createFileStorage(root) {
         return stored.data;
       }
     },
+    async remove(key) {
+      if (!key) return;
+      const full = safePath(root, key);
+      await fs.unlink(full).catch((error) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
+      await StoredFile.deleteOne({ key });
+    },
   };
 }
 

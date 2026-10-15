@@ -1,16 +1,19 @@
-import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  approveDocument, chooseZohoAccount, fetchDocument, fetchDocumentFile,
-  retryDocument, saveDocument, sendZohoExpense, submitDocument, testZohoExpense,
+  approveDocument, chooseZohoAccount, deleteDocument, fetchDocument, fetchDocumentFile,
+  replaceDocumentPhoto, retryDocument, saveDocument, sendZohoExpense, submitDocument, testZohoExpense,
 } from '../../api/documents.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import StatusBadge from '../../components/StatusBadge.jsx';
+import { compressImage } from '../../utils/compressImage.js';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 
 export default function DocumentReview() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
+  const replaceInputRef = useRef(null);
   const [document, setDocument] = useState(null);
   const [fields, setFields] = useState({});
   const [lineItems, setLineItems] = useState([]);
@@ -22,6 +25,7 @@ export default function DocumentReview() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [draft, setDraft] = useState(null);
+  const [fileBusy, setFileBusy] = useState(false);
   const reviewer = user?.role === 'accountant' || user?.role === 'admin';
 
   function apply(doc) {
@@ -31,23 +35,30 @@ export default function DocumentReview() {
     setLineItems(doc.lineItems || []);
   }
 
+  async function reloadFile() {
+    const file = await fetchDocumentFile(id);
+    setFileUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file.blob);
+    });
+    setMime(file.mimeType);
+  }
+
   useEffect(() => {
     let cancelled = false;
-    let url = '';
     async function load() {
       const body = await fetchDocument(id);
       if (cancelled) return;
       apply(body.document);
-      const file = await fetchDocumentFile(id);
-      if (cancelled) return;
-      url = URL.createObjectURL(file.blob);
-      setFileUrl(url);
-      setMime(file.mimeType);
+      await reloadFile();
     }
-    load().catch((err) => setError(err.message));
+    load().catch((err) => { if (!cancelled) setError(err.message); });
     return () => {
       cancelled = true;
-      if (url) URL.revokeObjectURL(url);
+      setFileUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return '';
+      });
     };
   }, [id]);
 
@@ -115,6 +126,47 @@ export default function DocumentReview() {
       setMessage('Expense created in Zoho Books.');
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  const canChangeFile = document
+    && document.status !== 'processing'
+    && !document.zohoExpense?.expenseId;
+
+  async function onDelete() {
+    if (!canChangeFile) return;
+    if (!window.confirm('Delete this receipt and its photo? This cannot be undone.')) return;
+    setFileBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      await deleteDocument(id);
+      navigate('/documents');
+    } catch (err) {
+      setError(err.message);
+      setFileBusy(false);
+    }
+  }
+
+  async function onReplace(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !canChangeFile || fileBusy) return;
+    setFileBusy(true);
+    setError('');
+    setMessage('Replacing photo…');
+    try {
+      const prepared = await compressImage(file);
+      const body = await replaceDocumentPhoto(id, prepared);
+      apply(body.document);
+      setDraft(null);
+      await reloadFile();
+      setMessage('New photo saved. Reading it now.');
+    } catch (err) {
+      setError(err.message);
+      setMessage('');
+    } finally {
+      setFileBusy(false);
     }
   }
 
@@ -230,7 +282,32 @@ export default function DocumentReview() {
                 {document.status === 'failed' && (
                   <button type="button" className="btn btn-primary" onClick={() => run(() => retryDocument(id))}>Retry reading</button>
                 )}
+                {canChangeFile && (
+                  <>
+                    <input
+                      ref={replaceInputRef}
+                      type="file"
+                      accept="image/*,application/pdf"
+                      hidden
+                      onChange={onReplace}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={fileBusy}
+                      onClick={() => replaceInputRef.current?.click()}
+                    >
+                      {fileBusy ? 'Working…' : 'Replace photo'}
+                    </button>
+                    <button type="button" className="btn btn-secondary" disabled={fileBusy} onClick={onDelete}>
+                      Delete
+                    </button>
+                  </>
+                )}
               </div>
+              {canChangeFile && (
+                <p className="hint">Wrong photo or data? Replace the file to re-read it, or delete this receipt.</p>
+              )}
             </>
         </section>
       </div>

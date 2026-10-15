@@ -113,6 +113,50 @@ test('customer payment posts only to customerpayments', async () => {
   assert.equal(body.customer_id, '982000000001');
   assert.equal(body.invoices[0].invoice_id, '982000000002');
   assert.equal(body.amount_applied ?? body.invoices[0].amount_applied, 28000);
+  assert.equal(body.payment_mode, 'Bank Transfer');
+});
+
+test('createCustomerPayment sends an explicit payment mode label', async () => {
+  const zoho = {
+    dc: 'com',
+    clientId: 'cid',
+    clientSecret: 'secret',
+    organizationId: '60000000001',
+  };
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method, body: options.body });
+    if (String(url).includes('/oauth/v2/token')) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ access_token: 'token', expires_in: 3600 }),
+      };
+    }
+    return {
+      ok: true,
+      status: 201,
+      text: async () => JSON.stringify({ code: 0, payment: { payment_id: '982000000999' } }),
+    };
+  };
+  await createCustomerPayment({
+    zoho,
+    refreshToken: 'refresh-token',
+    payment: {
+      customerId: '982000000001',
+      invoiceId: '982000000002',
+      amount: 28000,
+      amountApplied: 28000,
+      date: '2026-09-30',
+      accountId: '982000000567250',
+      paymentMode: 'Bank Transfer',
+      referenceNumber: 'REF-1',
+      description: 'FinOps test',
+    },
+    fetchImpl,
+  });
+  const paymentCall = calls.find((c) => c.url.includes('/customerpayments'));
+  assert.equal(JSON.parse(paymentCall.body).payment_mode, 'Bank Transfer');
 });
 
 test('overdue invoice rows keep string ids and integer rupiah', () => {

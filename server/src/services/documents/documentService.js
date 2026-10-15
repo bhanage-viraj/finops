@@ -347,4 +347,109 @@ export async function retryDocument(id, user, env) {
   return toDto(updated, await historyFor(updated._id));
 }
 
+function assertCanRemoveOrReplace(doc) {
+  if (doc.status === 'processing') {
+    throw httpError(400, 'This receipt is still being read. Wait a moment, then try again.');
+  }
+  if (doc.zohoExpense?.expenseId) {
+    throw httpError(400, 'This receipt was already sent to Zoho. Delete or reverse it there first.');
+  }
+}
+
+async function removeStoredKeys(env, keys) {
+  const storage = createFileStorage(env.upload.dir);
+  for (const key of keys.filter(Boolean)) {
+    await storage.remove(key).catch((error) => {
+      console.error('Could not remove stored file', key, error.message);
+    });
+  }
+}
+
+export async function deleteDocument(id, user, env) {
+  const doc = await loadDocument(id, user);
+  assertCanRemoveOrReplace(doc);
+  const keys = [doc.originalFileKey, doc.preprocessedFileKey];
+  await writeAudit({
+    userId: user.id,
+    action: 'delete',
+    entity: 'documents',
+    entityId: doc._id,
+    before: { status: doc.status, originalName: doc.originalName },
+  });
+  await Document.deleteOne({ _id: doc._id });
+  await removeStoredKeys(env, keys);
+  return { id: String(id), deleted: true };
+}
+
+export async function replaceDocumentPhoto(id, user, file, env) {
+  const doc = await loadDocument(id, user);
+  assertCanRemoveOrReplace(doc);
+  if (!file?.buffer) throw httpError(400, 'Choose a photo or PDF to replace this receipt.');
+
+  const name = displayFileName(file.originalname);
+  let bytes = file.buffer;
+  try {
+    bytes = await prepareStoredBytes(bytes);
+  } catch {
+    throw httpError(400, 'This photo could not be prepared. Save it as a JPEG and try again.');
+  }
+  const check = inspectUpload({
+    filename: name,
+    bytes,
+    maxBytes: env.upload.maxBytes,
+  });
+  if (!check.ok) throw httpError(400, check.error);
+
+  const storage = createFileStorage(env.upload.dir);
+  const oldKeys = [doc.originalFileKey, doc.preprocessedFileKey];
+  const key = await storage.save(bytes, extensionFor(check.mime));
+
+  doc.originalFileKey = key;
+  doc.preprocessedFileKey = '';
+  doc.preprocessNote = '';
+  doc.originalName = name;
+  doc.mimeType = check.mime;
+  doc.size = bytes.length;
+  doc.sha256 = createHash('sha256').update(bytes).digest('hex');
+  doc.pageCount = check.mime === 'application/pdf' ? pdfPageCount(file.buffer) : 1;
+  doc.status = 'uploaded';
+  doc.documentType = 'unknown';
+  doc.confirmedType = '';
+  doc.ai = null;
+  doc.confirmed = null;
+  doc.validation = null;
+  doc.duplicateOf = null;
+  doc.failureMessage = '';
+  doc.rejectReason = '';
+  doc.processingStartedAt = null;
+  doc.processingAttempts = [];
+  doc.approvedBy = null;
+  doc.approvedAt = null;
+  doc.submittedBy = null;
+  doc.submittedAt = null;
+  doc.rejectedBy = null;
+  doc.rejectedAt = null;
+  doc.accountingPreview = null;
+  doc.searchParty = '';
+  doc.searchDate = null;
+  doc.searchTotal = null;
+  // Keep any previous Zoho account picks; expense id is already blocked above.
+  doc.markModified('ai');
+  doc.markModified('confirmed');
+  doc.markModified('validation');
+  doc.markModified('processingAttempts');
+  await doc.save();
+
+  await removeStoredKeys(env, oldKeys);
+  await writeAudit({
+    userId: user.id,
+    action: 'replace',
+    entity: 'documents',
+    entityId: doc._id,
+    after: { name: doc.originalName, mimeType: doc.mimeType, status: 'uploaded' },
+  });
+  queueDocumentRead(doc._id, env);
+  return toDto(doc, await historyFor(doc._id));
+}
+
 export { loadDocument, processDocument };

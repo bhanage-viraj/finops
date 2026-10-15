@@ -52,6 +52,9 @@ export default function DocumentQueue() {
   return (
     <>
       <h1>Documents</h1>
+      <p className="hint">
+        Expense receipts only (fuel, supplier, work orders). Same Take photo as Overview. Use Payments for bank screenshots.
+      </p>
       <UploadDropzone onUploaded={load} />
       <div className="filters">
         <select aria-label="Document type" value={filters.type} onChange={(event) => setFilter('type', event.target.value)}>

@@ -87,6 +87,8 @@ export function readEnv(source = process.env) {
       paidThroughAccountId: source.ZOHO_PAID_THROUGH_ACCOUNT_ID || '',
       // Bank account in Zoho that receives customer transfer deposits (Payments).
       paymentDepositAccountId: source.ZOHO_PAYMENT_DEPOSIT_ACCOUNT_ID || '5802591000000144205',
+      // Must match a Zoho payment mode label exactly (this org uses "Bank Transfer").
+      paymentMode: String(source.ZOHO_PAYMENT_MODE || 'Bank Transfer').trim() || 'Bank Transfer',
       redirectUri: source.ZOHO_REDIRECT_URI || 'http://localhost:4000/auth/zoho/callback',
       refreshToken: source.ZOHO_REFRESH_TOKEN || '',
     },

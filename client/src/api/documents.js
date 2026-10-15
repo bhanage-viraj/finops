@@ -43,6 +43,16 @@ export function retryDocument(id) {
   return api(`/documents/${id}/retry`, { method: 'POST' });
 }
 
+export function deleteDocument(id) {
+  return api(`/documents/${id}`, { method: 'DELETE' });
+}
+
+export function replaceDocumentPhoto(id, file) {
+  const body = new FormData();
+  body.append('file', file);
+  return api(`/documents/${id}/replace`, { method: 'POST', body });
+}
+
 export function sendZohoExpense(id) {
   return api(`/documents/${id}/zoho-expense`, { method: 'POST' });
 }

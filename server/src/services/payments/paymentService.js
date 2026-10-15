@@ -141,9 +141,24 @@ async function requireZohoReady(env) {
   return { refreshToken, settings };
 }
 
-async function loadZohoInvoices(env) {
+const ZOHO_INVOICE_CACHE_MS = 3 * 60 * 1000;
+let zohoInvoiceCache = { at: 0, orgId: '', invoices: null };
+
+/** Short in-memory cache so upload/match/search do not re-pull Zoho every time. */
+async function loadZohoInvoices(env, { force = false } = {}) {
   const { refreshToken } = await requireZohoReady(env);
-  return listUnpaidInvoicesForMatching({ zoho: env.zoho, refreshToken });
+  const orgId = String(env.zoho?.organizationId || '');
+  const fresh = zohoInvoiceCache.invoices
+    && zohoInvoiceCache.orgId === orgId
+    && (Date.now() - zohoInvoiceCache.at) < ZOHO_INVOICE_CACHE_MS;
+  if (!force && fresh) return zohoInvoiceCache.invoices;
+  const invoices = await listUnpaidInvoicesForMatching({ zoho: env.zoho, refreshToken });
+  zohoInvoiceCache = { at: Date.now(), orgId, invoices };
+  return invoices;
+}
+
+export function clearZohoInvoiceCache() {
+  zohoInvoiceCache = { at: 0, orgId: '', invoices: null };
 }
 
 function applyMatchResult(payment, match) {
@@ -234,19 +249,118 @@ async function rematchPaymentDoc(payment, env) {
   }
 }
 
+let paymentReadQueue = Promise.resolve();
+
+function queuePaymentRead(id, env) {
+  paymentReadQueue = paymentReadQueue
+    .then(() => processPayment(id, env))
+    .catch((error) => {
+      console.error('Payment processing failed', error.message);
+    });
+}
+
+/** AI read + Zoho match. Runs in the background after upload returns. */
+export async function processPayment(id, env) {
+  const payment = await BankPayment.findById(id);
+  if (!payment) return null;
+  if (!['uploaded', 'processing', 'failed'].includes(payment.status)) return payment;
+
+  payment.status = 'processing';
+  payment.failureMessage = '';
+  await payment.save();
+
+  const storage = createFileStorage(env.upload.dir);
+  let bytes;
+  try {
+    bytes = await storage.read(payment.imageKey);
+  } catch (error) {
+    payment.status = 'failed';
+    payment.failureMessage = 'This screenshot is no longer stored. Upload it again.';
+    await payment.save();
+    return payment;
+  }
+
+  try {
+    const extraction = await readPaymentScreenshot(env, {
+      mimeType: payment.mimeType,
+      bytes,
+    });
+    payment.ai = {
+      sender: extraction.sender,
+      amount: extraction.amount,
+      paidAt: extraction.paidAt,
+      reference: extraction.reference,
+      recipient: extraction.recipient,
+      transferMethod: extraction.transferMethod,
+      confidence: extraction.confidence,
+      model: extraction.model,
+      readAt: extraction.readAt,
+      raw: extraction.raw,
+    };
+
+    let zohoInvoices = [];
+    let zohoError = '';
+    try {
+      zohoInvoices = await loadZohoInvoices(env);
+    } catch (error) {
+      zohoError = error.message || 'Zoho invoices could not be loaded.';
+    }
+
+    if (zohoError) {
+      payment.matchReasons = [zohoError];
+      payment.flags = ['unidentified'];
+      payment.matchConfidence = 'low';
+      payment.matchType = 'none';
+      payment.status = 'read';
+    } else {
+      const match = await matchPayment({
+        sender: extraction.sender,
+        customerName: payment.confirmed?.customerName || extraction.sender,
+        invoiceNumberHint: payment.confirmed?.invoiceHint || null,
+        amount: payment.confirmed?.amount ?? extraction.amount,
+        paidAt: payment.confirmed?.paidAt || extraction.paidAt,
+        invoices: zohoInvoices,
+        excludePaymentId: payment._id,
+      });
+      applyMatchResult(payment, match);
+    }
+
+    await payment.save();
+    await writeAudit({
+      userId: payment.uploadedBy,
+      action: 'read',
+      entity: 'bankPayments',
+      entityId: payment._id,
+      after: {
+        status: payment.status,
+        amount: payment.ai.amount,
+        matchType: payment.matchType,
+        zohoInvoiceId: payment.zohoInvoiceId,
+      },
+    });
+    return payment;
+  } catch (error) {
+    payment.status = 'failed';
+    payment.failureMessage = error.code === 'AI_NOT_CONFIGURED'
+      ? error.message
+      : (error.message || 'The screenshot could not be read.');
+    await payment.save();
+    await writeAudit({
+      userId: payment.uploadedBy,
+      action: 'read_failed',
+      entity: 'bankPayments',
+      entityId: payment._id,
+      after: { status: 'failed', failureMessage: payment.failureMessage },
+    });
+    return payment;
+  }
+}
+
 export async function createPayments({ user, files, env, hints = {} }) {
   const storage = createFileStorage(env.upload.dir);
   const created = [];
   const rejected = [];
   const parsedHints = parseHintsFromBody(hints);
-
-  let zohoInvoices = [];
-  let zohoError = '';
-  try {
-    zohoInvoices = await loadZohoInvoices(env);
-  } catch (error) {
-    zohoError = error.message || 'Zoho invoices could not be loaded.';
-  }
 
   for (const file of files || []) {
     const filename = displayFileName(file.originalname);
@@ -280,7 +394,7 @@ export async function createPayments({ user, files, env, hints = {} }) {
       mimeType,
       size: bytes.length,
       imageKey,
-      status: 'read',
+      status: 'uploaded',
       confirmed: {
         customerName: parsedHints.customerName,
         siteNote: parsedHints.siteNote,
@@ -291,70 +405,15 @@ export async function createPayments({ user, files, env, hints = {} }) {
       },
     });
 
-    try {
-      const extraction = await readPaymentScreenshot(env, { mimeType, bytes });
-      payment.ai = {
-        sender: extraction.sender,
-        amount: extraction.amount,
-        paidAt: extraction.paidAt,
-        reference: extraction.reference,
-        recipient: extraction.recipient,
-        transferMethod: extraction.transferMethod,
-        confidence: extraction.confidence,
-        model: extraction.model,
-        readAt: extraction.readAt,
-        raw: extraction.raw,
-      };
-
-      if (zohoError) {
-        payment.matchReasons = [zohoError];
-        payment.flags = ['unidentified'];
-        payment.matchConfidence = 'low';
-        payment.matchType = 'none';
-        payment.status = 'read';
-      } else {
-        const match = await matchPayment({
-          sender: extraction.sender,
-          customerName: parsedHints.customerName || extraction.sender,
-          invoiceNumberHint: parsedHints.invoiceHint,
-          amount: parsedHints.amount ?? extraction.amount,
-          paidAt: parsedHints.paidAt || extraction.paidAt,
-          invoices: zohoInvoices,
-          excludePaymentId: payment._id,
-        });
-        applyMatchResult(payment, match);
-      }
-
-      await payment.save();
-      await writeAudit({
-        userId: user.id,
-        action: 'create',
-        entity: 'bankPayments',
-        entityId: payment._id,
-        after: {
-          status: payment.status,
-          amount: payment.ai.amount,
-          matchType: payment.matchType,
-          matchConfidence: payment.matchConfidence,
-          zohoInvoiceId: payment.zohoInvoiceId,
-        },
-      });
-      created.push(serializePayment(payment));
-    } catch (error) {
-      payment.status = 'failed';
-      payment.failureMessage = error.code === 'AI_NOT_CONFIGURED'
-        ? error.message
-        : (error.message || 'The screenshot could not be read.');
-      await payment.save();
-      await writeAudit({
-        userId: user.id,
-        action: 'create',
-        entity: 'bankPayments',
-        entityId: payment._id,
-        after: { status: 'failed', failureMessage: payment.failureMessage },
-      });
-      rejected.push({ name: filename, error: payment.failureMessage, id: String(payment._id) });
-    }
+    await writeAudit({
+      userId: user.id,
+      action: 'create',
+      entity: 'bankPayments',
+      entityId: payment._id,
+      after: { status: 'uploaded', name: payment.originalName },
+    });
+    created.push(serializePayment(payment));
+    queuePaymentRead(payment._id, env);
   }
 
   return { created, rejected };
@@ -570,7 +629,7 @@ export async function approvePayment(id, user, body = {}, env) {
         amount,
         amountApplied: applied,
         date: dateIso,
-        paymentMode: 'banktransfer',
+        paymentMode: env.zoho.paymentMode || 'Bank Transfer',
         accountId: env.zoho.paymentDepositAccountId,
         referenceNumber: payment.ai?.reference || '',
         description: notes,
@@ -585,6 +644,7 @@ export async function approvePayment(id, user, body = {}, env) {
   payment.approvedBy = user.id;
   payment.approvedAt = new Date();
   await payment.save();
+  clearZohoInvoiceCache();
 
   await writeAudit({
     userId: user.id,

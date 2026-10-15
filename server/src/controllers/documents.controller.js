@@ -1,7 +1,7 @@
 import { createFileStorage } from '../services/storage/fileStorage.js';
 import {
-  approveDocument, createDocuments, documentStats, fileKeyFor, getDocument, listDocuments,
-  loadDocument, rejectDocument, retryDocument, submitDocument, updateDocument,
+  approveDocument, createDocuments, deleteDocument, documentStats, fileKeyFor, getDocument, listDocuments,
+  loadDocument, rejectDocument, replaceDocumentPhoto, retryDocument, submitDocument, updateDocument,
 } from '../services/documents/documentService.js';
 import { previewZohoExpense, selectZohoAccount, sendZohoExpense } from '../services/documents/zohoExpense.js';
 import { asyncHandler, httpError } from '../utils/http.js';
@@ -90,6 +90,18 @@ export function reject() {
 export function retry(env) {
   return asyncHandler(async (req, res) => {
     res.json({ document: await retryDocument(req.params.id, req.user, env) });
+  });
+}
+
+export function remove(env) {
+  return asyncHandler(async (req, res) => {
+    res.json(await deleteDocument(req.params.id, req.user, env));
+  });
+}
+
+export function replacePhoto(env) {
+  return asyncHandler(async (req, res) => {
+    res.json({ document: await replaceDocumentPhoto(req.params.id, req.user, req.file, env) });
   });
 }
 

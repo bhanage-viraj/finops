@@ -53,7 +53,7 @@ export default function Payments() {
       const rejected = result.rejected?.length || 0;
       setMessage(rejected
         ? `${saved} saved. ${rejected} failed: ${result.rejected.map((r) => r.error).join(' ')}`
-        : `${saved} uploaded.`);
+        : `${saved} uploaded. Reading in the background…`);
       load();
     } catch (err) {
       setError(err.message || 'Upload failed.');

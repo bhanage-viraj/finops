@@ -129,6 +129,9 @@ export default function Dashboard() {
   return (
     <>
       <h1>Overview</h1>
+      <p className="hint">
+        Take photo uploads an expense receipt — the same action as on Documents. Bank transfer screenshots go under Payments.
+      </p>
       <UploadDropzone />
       {error && <p className="message message-bad">{error}</p>}
       <div className="stat-grid">

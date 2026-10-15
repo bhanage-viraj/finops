@@ -66,6 +66,19 @@ export default function PaymentDetail() {
   }, [id]);
 
   useEffect(() => {
+    if (!payment || !['uploaded', 'processing'].includes(payment.status)) return undefined;
+    const timer = setInterval(() => {
+      fetchPayment(id)
+        .then((body) => {
+          setPayment(body.payment);
+          setQuery(body.payment.confirmed?.customerName || body.payment.invoice?.customer?.name || '');
+        })
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [id, payment?.status]);
+
+  useEffect(() => {
     if (!canReview || payment?.status === 'approved') return undefined;
     const q = query.trim();
     if (q.length < 2) {
@@ -120,7 +133,8 @@ export default function PaymentDetail() {
   if (!payment) return <p className="message message-bad">{error}</p>;
 
   const invoice = payment.invoice;
-  const editable = canReview && payment.status !== 'approved' && payment.status !== 'rejected';
+  const editable = canReview
+    && !['approved', 'rejected', 'uploaded', 'processing', 'failed'].includes(payment.status);
   const amount = payment.amountReceived ?? payment.ai?.amount;
 
   return (
@@ -133,6 +147,12 @@ export default function PaymentDetail() {
 
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
+      {['uploaded', 'processing'].includes(payment.status) && (
+        <p className="message message-warn">Reading the screenshot. This page updates when it finishes.</p>
+      )}
+      {payment.status === 'failed' && payment.failureMessage && (
+        <p className="message message-bad">{payment.failureMessage}</p>
+      )}
 
       <div className="review-grid payment-match-grid">
         <section className="card">
