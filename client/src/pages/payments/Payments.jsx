@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { fetchOpenInvoices, fetchPayments, uploadPayments } from '../../api/payments.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
@@ -53,6 +53,10 @@ export default function Payments() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState([]);
+  const [pendingPreview, setPendingPreview] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const captionRef = useRef(null);
 
   function load() {
     fetchPayments()
@@ -84,14 +88,90 @@ export default function Payments() {
     return () => clearTimeout(timer);
   }, [caption, canWarm]);
 
-  async function onUpload(event) {
-    const files = [...(event.target.files || [])];
+  // Screenshots waiting for a customer name (pasted or dropped before typing it).
+  useEffect(() => {
+    if (!pending.length) {
+      setPendingPreview('');
+      return undefined;
+    }
+    const url = URL.createObjectURL(pending[0]);
+    setPendingPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pending]);
+
+  function addFiles(list) {
+    const files = [...(list || [])].filter((file) => file.type.startsWith('image/'));
+    if (!files.length) {
+      setError('Only screenshot images can be added here.');
+      return;
+    }
+    if (busy) return;
+    setError('');
+    if (parseCaption(caption).customerName.length >= 2) {
+      uploadFiles(files);
+      return;
+    }
+    setPending(files);
+    setMessage('');
+    captionRef.current?.focus();
+  }
+
+  const addFilesRef = useRef(addFiles);
+  addFilesRef.current = addFiles;
+
+  // Ctrl/Cmd+V anywhere on the page takes a copied screenshot (e.g. from WhatsApp Web).
+  useEffect(() => {
+    function onPaste(event) {
+      const items = [...(event.clipboardData?.items || [])];
+      const images = items
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter(Boolean);
+      if (!images.length) return;
+      // Let pasted caption text still land in the input when both are copied.
+      if (!event.clipboardData.getData('text/plain')) event.preventDefault();
+      addFilesRef.current(images);
+    }
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, []);
+
+  function onPick(event) {
+    const files = event.target.files;
     event.target.value = '';
+    addFiles(files);
+  }
+
+  function onDragOver(event) {
+    if (![...(event.dataTransfer?.types || [])].includes('Files')) return;
+    event.preventDefault();
+    setDragging(true);
+  }
+
+  function onDragLeave(event) {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setDragging(false);
+  }
+
+  function onDrop(event) {
+    event.preventDefault();
+    setDragging(false);
+    addFiles(event.dataTransfer?.files);
+  }
+
+  function onCaptionKey(event) {
+    if (event.key === 'Enter' && pending.length && captionReady) {
+      event.preventDefault();
+      uploadFiles(pending);
+    }
+  }
+
+  async function uploadFiles(files) {
     if (!files.length || busy) return;
 
     const { customerName, siteNote } = parseCaption(caption);
     if (!customerName) {
-      setError('Paste the WhatsApp customer name first, then choose the bank screenshot.');
+      setError('Add the WhatsApp customer name first.');
       return;
     }
 
@@ -108,6 +188,7 @@ export default function Payments() {
       const saved = result.payments || [];
       const rejected = result.rejected?.length || 0;
       setCaption('');
+      setPending([]);
       if (saved.length === 1 && rejected === 0) {
         setMessage('Saved. Matching from the WhatsApp name…');
         navigate(`/payments/${saved[0].id}`);
@@ -135,36 +216,74 @@ export default function Payments() {
         <h1>Payments</h1>
       </div>
 
-      <section className="card payment-capture">
+      <section
+        className={`card payment-capture${dragging ? ' is-dragging' : ''}`}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         <h2>From WhatsApp</h2>
         <p className="hint">
-          Paste the customer name from the chat (example: Toko Sariboga 29.9), then upload the bank transfer screenshot.
-          Zoho records use payment mode Bank Transfer.
+          Type the customer name from the chat (example: Toko Sariboga 29.9), then add the bank transfer screenshot:
+          paste it (Ctrl/Cmd+V), drag it here, or choose a file. Zoho records use payment mode Bank Transfer.
         </p>
         <label className="field">
           <span className="field-label">WhatsApp customer name</span>
           <input
+            ref={captionRef}
             value={caption}
             onChange={(event) => setCaption(event.target.value)}
+            onKeyDown={onCaptionKey}
             placeholder="Toko Sariboga 29.9"
             autoComplete="off"
             disabled={busy}
           />
         </label>
-        <div className="actions">
-          <label className={`btn btn-primary${!captionReady || busy ? ' is-disabled' : ''}`}>
-            {busy ? 'Saving…' : 'Upload bank screenshot'}
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              disabled={busy || !captionReady}
-              onChange={onUpload}
-            />
-          </label>
-        </div>
-        {!captionReady && (
-          <p className="hint">Customer name is required so we can match Zoho without typing again later.</p>
+
+        {pending.length > 0 ? (
+          <div className="payment-pending">
+            {pendingPreview && <img src={pendingPreview} alt="Screenshot waiting to upload" />}
+            <div>
+              <p className="hint">
+                {pending.length === 1 ? 'Screenshot ready.' : `${pending.length} screenshots ready.`}
+                {captionReady ? ' Press Upload or Enter.' : ' Type the customer name, then press Upload.'}
+              </p>
+              <div className="actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy || !captionReady}
+                  onClick={() => uploadFiles(pending)}
+                >
+                  {busy ? 'Saving…' : 'Upload'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={busy}
+                  onClick={() => setPending([])}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="payment-drop">
+            <p className="hint">
+              {dragging ? 'Drop the screenshot here' : 'Paste or drop the bank screenshot here'}
+            </p>
+            <label className={`btn btn-primary${busy ? ' is-disabled' : ''}`}>
+              {busy ? 'Saving…' : 'Choose screenshot'}
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                disabled={busy}
+                onChange={onPick}
+              />
+            </label>
+          </div>
         )}
       </section>
 

@@ -380,6 +380,32 @@ a.btn {
 .payment-reading-row td { background: var(--accent-soft); }
 .payment-capture { margin-bottom: var(--space-4); }
 .payment-capture .field { display: grid; gap: var(--space-1); margin: var(--space-3) 0; }
+.payment-capture.is-dragging { border-color: var(--accent); background: var(--accent-soft); }
+.payment-drop {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.payment-capture.is-dragging .payment-drop { border-color: var(--accent); }
+.payment-drop .hint { margin: 0; }
+.payment-pending {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+.payment-pending img {
+  width: 96px;
+  max-height: 160px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.payment-pending .hint { margin: 0 0 var(--space-2); }
 .payment-name-note { font-weight: 400; grid-column: 1 / -1; }
 .payment-match-note { margin: var(--space-3) 0 0; }
 .payment-invoice-pick { margin-top: var(--space-3); }
