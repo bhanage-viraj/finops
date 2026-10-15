@@ -414,11 +414,53 @@ a.btn {
 .payment-invoice-pick .field-label { margin: 0; }
 .payment-tick-tools { margin: 0; }
 .payment-tick-tools .btn { min-height: 32px; padding: 0 var(--space-3); }
-.payment-alloc-table td:first-child,
-.payment-alloc-table th:first-child { width: 36px; }
-.payment-alloc-table input[type="checkbox"] { width: 20px; height: 20px; }
-.payment-alloc-table input[type="checkbox"]:disabled { opacity: 0.4; cursor: not-allowed; }
 .payment-invoice-pick > .btn { margin-top: var(--space-2); }
+.pay-pick-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.pay-pick-list li + li { border-top: 1px solid var(--border); }
+.pay-pick-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 52px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  cursor: pointer;
+  user-select: none;
+}
+.pay-pick-row:hover { background: var(--bg); }
+.pay-pick-row.is-ticked { background: var(--accent-soft); }
+.pay-pick-row.is-static,
+.pay-pick-row.is-locked { cursor: default; }
+.pay-pick-row.is-static:hover { background: var(--surface); }
+.pay-pick-row input[type="checkbox"] {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: inherit;
+}
+.pay-pick-row input[type="checkbox"]:disabled { opacity: 0.4; }
+.pay-pick-main,
+.pay-pick-amount { display: flex; flex-direction: column; gap: 2px; }
+.pay-pick-main { flex: 1; min-width: 0; }
+.pay-pick-amount { text-align: right; font-variant-numeric: tabular-nums; }
+.pay-pick-main .hint,
+.pay-pick-amount .hint { margin: 0; font-size: var(--text-table); }
+.pay-pick-sum {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) 0 0;
+}
+.pay-pick-apply { width: 100%; }
 .name-suggest-list button.is-current {
   background: var(--ok-bg);
   color: var(--ok-ink);

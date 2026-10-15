@@ -14,6 +14,9 @@ import StatusBadge from '../../components/StatusBadge.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 
+// Same limit the server uses to treat a small surplus as the sender's bank fee.
+const MAX_BANK_FEE = 6500;
+
 function formatWhen(value) {
   if (!value) return '—';
   try {
@@ -300,9 +303,28 @@ export default function PaymentDetail() {
   const adminFee = payment.ai?.adminFee || payment.bankFee || 0;
   const allocations = payment.allocations || [];
   const appliedById = new Map(allocations.map((row) => [String(row.invoiceId), row.applied]));
-  const shortBy = allocations.reduce((total, row) => total + Math.max(0, row.remaining - row.applied), 0);
-  const tickedRows = customerInvoices.filter((row) => ticked.has(String(row.id)));
-  const tickedTotal = tickedRows.reduce((total, row) => total + row.remaining, 0);
+  const pickRows = customerInvoices.length ? customerInvoices : allocations.map((row) => ({
+    id: row.invoiceId, invoiceNo: row.invoiceNo, date: row.date, remaining: row.remaining,
+  }));
+  const tickedTotal = pickRows
+    .filter((row) => ticked.has(String(row.id)))
+    .reduce((total, row) => total + row.remaining, 0);
+  const pickGap = hasAmount ? amount - tickedTotal : 0;
+  let pickSumClass = 'message-warn';
+  let pickSumText = 'Tick the invoices this transfer pays.';
+  if (hasAmount && ticked.size) {
+    if (pickGap === 0) {
+      pickSumClass = 'message-ok';
+      pickSumText = 'Exact match.';
+    } else if (pickGap > 0 && pickGap <= MAX_BANK_FEE) {
+      pickSumClass = 'message-ok';
+      pickSumText = `Match · ${formatRupiah(pickGap)} bank fee not recorded.`;
+    } else if (pickGap > 0) {
+      pickSumText = `${formatRupiah(pickGap)} extra stays as customer credit.`;
+    } else {
+      pickSumText = `${formatRupiah(-pickGap)} short · oldest invoices paid first, last one partly.`;
+    }
+  }
   const currentIds = allocations.map((row) => String(row.invoiceId)).sort().join(',');
   const tickedIds = [...ticked].sort().join(',');
   const tickChanged = ticked.size > 0 && tickedIds !== currentIds;
@@ -435,73 +457,51 @@ export default function PaymentDetail() {
           {invoice && (
             <dl className="field-list">
               <div><dt>Customer</dt><dd>{invoice.customer?.name || '—'}</dd></div>
-              <div>
-                <dt>Paying</dt>
-                <dd>
-                  {allocations.length > 1 ? `${allocations.filter((row) => row.applied > 0).length} invoices` : invoice.invoiceNo}
-                  {payment.amountApplied != null ? ` · ${formatRupiah(payment.amountApplied)}` : ''}
-                </dd>
-              </div>
               <div><dt>Zoho mode</dt><dd>Bank Transfer</dd></div>
             </dl>
           )}
 
           {invoice && matchNote && <p className="hint payment-match-note">{matchNote}</p>}
-          {invoice && hasAmount && shortBy > 0 && (
-            <p className="message message-warn">
-              {formatRupiah(shortBy)} still unpaid on the ticked invoices — Zoho keeps that part open.
-            </p>
-          )}
-          {invoice && payment.amountExcess > 0 && (
-            <p className="message message-warn">
-              {formatRupiah(payment.amountExcess)} more than the ticked invoices — Zoho keeps it as customer credit.
-            </p>
-          )}
-
           {invoice && closed && recordedRows.length > 0 && (
             <div className="payment-invoice-pick">
               <p className="field-label">
                 {payment.status === 'approved' ? 'Recorded in Zoho' : 'Invoices on this payment'}
               </p>
-              <div className="table-wrap">
-                <table className="payment-alloc-table payment-recorded-table">
-                  <thead>
-                    <tr>
-                      <th>Invoice</th>
-                      <th>Date</th>
-                      <th className="num">Balance then</th>
-                      <th className="num">Paid</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recordedRows.map((row) => (
-                      <tr key={String(row.invoiceId)}>
-                        <td>{row.invoiceNo || '—'}</td>
-                        <td>{row.date ? formatDay(row.date) : '—'}</td>
-                        <td className="num">{formatRupiah(row.remaining)}</td>
-                        <td className="num">
-                          {formatRupiah(row.applied)}
-                          {row.remaining != null && row.applied < row.remaining ? ' (part)' : ''}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ul className="pay-pick-list">
+                {recordedRows.map((row) => (
+                  <li key={String(row.invoiceId)} className="pay-pick-row is-static">
+                    <span className="pay-pick-main">
+                      <strong>{row.invoiceNo || '—'}</strong>
+                      <span className="hint">{row.date ? formatDay(row.date) : ''}</span>
+                    </span>
+                    <span className="pay-pick-amount">
+                      <strong>{formatRupiah(row.applied)}</strong>
+                      {row.remaining != null && row.applied < row.remaining && (
+                        <span className="hint">part of {formatRupiah(row.remaining)}</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {payment.amountExcess > 0 && (
+                <p className="message message-warn">
+                  {formatRupiah(payment.amountExcess)} kept as customer credit in Zoho.
+                </p>
+              )}
             </div>
           )}
 
-          {invoice && !closed && (customerInvoices.length > 0 || allocations.length > 0) && (
+          {invoice && !closed && pickRows.length > 0 && (
             <div className="payment-invoice-pick">
               <div className="title-row">
-                <p className="field-label">Tick the invoices this transfer pays</p>
-                {canFindCustomer && customerInvoices.length > 1 && (
+                <p className="field-label">Which invoices does this transfer pay?</p>
+                {canFindCustomer && pickRows.length > 1 && (
                   <div className="actions payment-tick-tools">
                     <button
                       type="button"
                       className="btn btn-secondary"
                       disabled={busy}
-                      onClick={() => setTicked(new Set(customerInvoices.map((row) => String(row.id))))}
+                      onClick={() => setTicked(new Set(pickRows.map((row) => String(row.id))))}
                     >
                       Select all
                     </button>
@@ -512,61 +512,49 @@ export default function PaymentDetail() {
                 )}
               </div>
               {loadingInvoices && <p className="hint">Loading this customer&apos;s unpaid invoices…</p>}
-              <div className="table-wrap">
-                <table className="payment-alloc-table">
-                  <thead>
-                    <tr>
-                      <th aria-label="Pay" />
-                      <th>Invoice</th>
-                      <th>Date</th>
-                      <th className="num">Balance</th>
-                      <th className="num">Paying</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(customerInvoices.length ? customerInvoices : allocations.map((row) => ({
-                      id: row.invoiceId, invoiceNo: row.invoiceNo, date: row.date, remaining: row.remaining,
-                    }))).map((row) => {
-                      const key = String(row.id);
-                      const applied = appliedById.get(key);
-                      return (
-                        <tr key={key} className={ticked.has(key) ? 'row-selected' : undefined}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              aria-label={`Pay ${row.invoiceNo}`}
-                              checked={ticked.has(key)}
-                              disabled={busy || !canFindCustomer}
-                              onChange={() => toggleTick(key)}
-                            />
-                          </td>
-                          <td>{row.invoiceNo}</td>
-                          <td>{formatDay(row.date)}</td>
-                          <td className="num">{formatRupiah(row.remaining)}</td>
-                          <td className="num">
-                            {applied == null || tickChanged ? '—' : (
-                              applied >= row.remaining ? formatRupiah(applied)
-                                : (applied > 0 ? `${formatRupiah(applied)} (part)` : 'Not reached')
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className="hint">
-                Ticked {ticked.size} · {formatRupiah(tickedTotal)}
-                {hasAmount ? ` · received ${formatRupiah(amount)}` : ''}
-                {hasAmount && tickedTotal && tickedTotal !== amount
-                  ? (tickedTotal > amount
-                    ? ` · ${formatRupiah(tickedTotal - amount)} short, oldest paid first`
-                    : ` · ${formatRupiah(amount - tickedTotal)} extra stays as credit`)
-                  : ''}
-              </p>
+              <ul className="pay-pick-list">
+                {pickRows.map((row) => {
+                  const key = String(row.id);
+                  const isTicked = ticked.has(key);
+                  const applied = tickChanged ? null : appliedById.get(key);
+                  let payingNote = '';
+                  if (isTicked && applied != null) {
+                    if (applied >= row.remaining) payingNote = 'Paid in full';
+                    else if (applied > 0) payingNote = `Pays ${formatRupiah(applied)} (part)`;
+                    else payingNote = 'Not reached by this amount';
+                  }
+                  return (
+                    <li key={key}>
+                      <label className={`pay-pick-row${isTicked ? ' is-ticked' : ''}${canFindCustomer ? '' : ' is-locked'}`}>
+                        <input
+                          type="checkbox"
+                          checked={isTicked}
+                          disabled={busy || !canFindCustomer}
+                          onChange={() => toggleTick(key)}
+                        />
+                        <span className="pay-pick-main">
+                          <strong>{row.invoiceNo}</strong>
+                          <span className="hint">{formatDay(row.date)}</span>
+                        </span>
+                        <span className="pay-pick-amount">
+                          <strong>{formatRupiah(row.remaining)}</strong>
+                          {payingNote && <span className="hint">{payingNote}</span>}
+                        </span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+              {hasAmount && (
+                <p className={`message pay-pick-sum ${pickSumClass}`}>
+                  <span>Ticked {ticked.size} · <strong>{formatRupiah(tickedTotal)}</strong></span>
+                  <span>Received <strong>{formatRupiah(amount)}</strong></span>
+                  <span>{pickSumText}</span>
+                </p>
+              )}
               {canFindCustomer && tickChanged && (
-                <button type="button" className="btn btn-primary" disabled={busy} onClick={applyTicked}>
-                  {busy ? 'Saving…' : `Use ${ticked.size} ticked invoice${ticked.size === 1 ? '' : 's'}`}
+                <button type="button" className="btn btn-primary pay-pick-apply" disabled={busy} onClick={applyTicked}>
+                  {busy ? 'Saving…' : `Use these ${ticked.size} invoice${ticked.size === 1 ? '' : 's'}`}
                 </button>
               )}
             </div>
