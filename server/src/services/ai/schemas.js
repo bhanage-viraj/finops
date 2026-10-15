@@ -122,6 +122,8 @@ export const paymentExtractionSchema = {
     sender: STRING_OR_NULL,
     recipient: STRING_OR_NULL,
     amount: STRING_OR_NULL,
+    adminFee: STRING_OR_NULL,
+    total: STRING_OR_NULL,
     paidAt: STRING_OR_NULL,
     reference: STRING_OR_NULL,
     transferMethod: STRING_OR_NULL,
@@ -183,13 +185,25 @@ export function assertPaymentExtraction(value) {
   if (!value || typeof value !== 'object') {
     throw new Error('The model did not return a payment object.');
   }
-  const amount = parsePaymentAmount(value.amount);
+  const nominal = parsePaymentAmount(value.amount);
+  const adminFeeRaw = parsePaymentAmount(value.adminFee);
+  const total = parsePaymentAmount(value.total);
+  const adminFee = adminFeeRaw != null && adminFeeRaw > 0 ? adminFeeRaw : null;
+  // The business receives the Nominal. If only the total was read, take the admin fee off it.
+  let amount = nominal;
+  if (amount == null && total != null) {
+    amount = adminFee != null && total > adminFee ? total - adminFee : total;
+  } else if (amount != null && adminFee != null && total != null && amount === total && total > adminFee) {
+    amount = total - adminFee;
+  }
   const paidAt = parsePaymentDate(value.paidAt);
   const confidence = clampScore(value.confidence);
   return {
     sender: value.sender == null || value.sender === '' ? null : String(value.sender).slice(0, 200),
     recipient: value.recipient == null || value.recipient === '' ? null : String(value.recipient).slice(0, 200),
     amount,
+    adminFee,
+    total,
     paidAt,
     reference: value.reference == null || value.reference === '' ? null : String(value.reference).slice(0, 120),
     transferMethod: value.transferMethod == null || value.transferMethod === ''

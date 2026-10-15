@@ -7,12 +7,15 @@ import {
 } from '../../integrations/erp/zohoBooks.js';
 import { readPaymentScreenshot } from '../ai/paymentReader.js';
 import { writeAudit } from '../audit/auditLogger.js';
-import { matchPayment } from '../matching/matcher.js';
+import { classifyAmountFit, matchPayment } from '../matching/matcher.js';
+import { compactName, nameSimilarity } from '../matching/normalizeName.js';
+import { WEAK_NAME } from '../matching/rules.js';
 import { createFileStorage, extensionFor } from '../storage/fileStorage.js';
 import { displayFileName, inspectUpload, prepareStoredBytes } from '../documents/uploads.js';
 import { httpError } from '../../utils/http.js';
 import { parsePaymentAmount, parsePaymentDate } from '../ai/schemas.js';
 import { parseDate } from '../documents/numbers.js';
+import { resolveCaptionDate, splitCaption } from './captionHints.js';
 
 function canReview(user) {
   return user.role === 'accountant' || user.role === 'admin';
@@ -34,21 +37,35 @@ function zohoPaymentDateIso(paidAt) {
   return `${y}-${m}-${day}`;
 }
 
-function effectiveAmount(payment) {
+function humanAmount(payment) {
   const confirmed = payment.confirmed?.amount;
-  if (confirmed != null && Number.isInteger(confirmed)) return confirmed;
-  return payment.ai?.amount ?? null;
+  return confirmed != null && Number.isInteger(confirmed) ? confirmed : null;
+}
+
+/** Transfer amount used for matching: the person's value, else the AI Nominal. */
+function effectiveAmount(payment) {
+  return humanAmount(payment) ?? payment.ai?.amount ?? null;
+}
+
+/** Amount to record in Zoho: the transfer minus any bank fee found by matching. */
+function receivedAmount(payment) {
+  const typed = humanAmount(payment);
+  if (typed != null) return typed;
+  const amount = payment.ai?.amount;
+  if (amount == null) return null;
+  const fee = Number.isInteger(payment.bankFee) && payment.bankFee > 0 ? payment.bankFee : 0;
+  return amount - fee;
+}
+
+/** Fit of the payment against one invoice; a typed amount is taken as-is (no fee guess). */
+function fitFor(payment, remaining) {
+  const amount = effectiveAmount(payment);
+  if (amount == null || !Number.isInteger(remaining)) return null;
+  return classifyAmountFit(amount, remaining, { allowFee: humanAmount(payment) == null });
 }
 
 function effectivePaidAt(payment) {
   return payment.confirmed?.paidAt || payment.ai?.paidAt || null;
-}
-
-function matchCustomerName(payment) {
-  return payment.confirmed?.customerName
-    || payment.confirmed?.sender
-    || payment.ai?.sender
-    || null;
 }
 
 function paymentNotes(payment) {
@@ -68,7 +85,7 @@ function serializePayment(doc) {
   const payment = typeof doc.toObject === 'function' ? doc.toObject() : doc;
   const snap = payment.matchedInvoice || {};
   const hasMatch = Boolean(payment.zohoInvoiceId);
-  const amountReceived = effectiveAmount(payment);
+  const amountReceived = receivedAmount(payment);
   const remaining = snap.remaining ?? null;
   const amountApplied = amountReceived != null && remaining != null
     ? Math.min(amountReceived, remaining)
@@ -87,6 +104,7 @@ function serializePayment(doc) {
     amountReceived,
     amountApplied,
     amountExcess,
+    bankFee: payment.bankFee || 0,
     matchedInvoiceId: payment.zohoInvoiceId || null,
     matchedCustomerId: payment.zohoCustomerId || null,
     zohoInvoiceId: payment.zohoInvoiceId || '',
@@ -141,20 +159,40 @@ async function requireZohoReady(env) {
   return { refreshToken, settings };
 }
 
-const ZOHO_INVOICE_CACHE_MS = 3 * 60 * 1000;
+const ZOHO_INVOICE_FRESH_MS = 3 * 60 * 1000;
+// Older than fresh but younger than this: answer at once, refresh in the background.
+// Safe because Zoho itself refuses a payment larger than the real balance.
+const ZOHO_INVOICE_STALE_MS = 15 * 60 * 1000;
 let zohoInvoiceCache = { at: 0, orgId: '', invoices: null };
+let zohoInvoiceInFlight = null;
 
-/** Short in-memory cache so upload/match/search do not re-pull Zoho every time. */
+function fetchZohoInvoices(env, refreshToken, orgId) {
+  // Several uploads at once share one Zoho pull.
+  if (!zohoInvoiceInFlight) {
+    zohoInvoiceInFlight = listUnpaidInvoicesForMatching({ zoho: env.zoho, refreshToken })
+      .then((invoices) => {
+        zohoInvoiceCache = { at: Date.now(), orgId, invoices };
+        return invoices;
+      })
+      .finally(() => { zohoInvoiceInFlight = null; });
+  }
+  return zohoInvoiceInFlight;
+}
+
+/** In-memory cache so upload/match/search do not re-pull Zoho every time. */
 async function loadZohoInvoices(env, { force = false } = {}) {
   const { refreshToken } = await requireZohoReady(env);
   const orgId = String(env.zoho?.organizationId || '');
-  const fresh = zohoInvoiceCache.invoices
-    && zohoInvoiceCache.orgId === orgId
-    && (Date.now() - zohoInvoiceCache.at) < ZOHO_INVOICE_CACHE_MS;
-  if (!force && fresh) return zohoInvoiceCache.invoices;
-  const invoices = await listUnpaidInvoicesForMatching({ zoho: env.zoho, refreshToken });
-  zohoInvoiceCache = { at: Date.now(), orgId, invoices };
-  return invoices;
+  const age = Date.now() - zohoInvoiceCache.at;
+  const usable = zohoInvoiceCache.invoices && zohoInvoiceCache.orgId === orgId;
+  if (!force && usable && age < ZOHO_INVOICE_FRESH_MS) return zohoInvoiceCache.invoices;
+  if (!force && usable && age < ZOHO_INVOICE_STALE_MS) {
+    fetchZohoInvoices(env, refreshToken, orgId).catch((error) => {
+      console.error('Background Zoho invoice refresh failed', error.message);
+    });
+    return zohoInvoiceCache.invoices;
+  }
+  return fetchZohoInvoices(env, refreshToken, orgId);
 }
 
 export function clearZohoInvoiceCache() {
@@ -169,6 +207,7 @@ function applyMatchResult(payment, match) {
   payment.matchReasons = match.matchReasons;
   payment.flags = match.flags;
   payment.matchCandidates = match.candidates || [];
+  payment.bankFee = match.matched ? (match.bankFee || 0) : 0;
   if (match.matched) {
     payment.matchedInvoice = {
       invoiceNumber: match.matched.invoiceNo || '',
@@ -196,9 +235,12 @@ function applyMatchResult(payment, match) {
 }
 
 function parseHintsFromBody(body = {}) {
-  const customerName = String(body.customerName || '').trim().slice(0, 200) || null;
-  const siteNote = String(body.siteNote || '').trim().slice(0, 120) || null;
-  const invoiceHint = String(body.invoiceHint || body.invoiceNumberHint || '').trim().slice(0, 80) || null;
+  // A pasted caption may still carry "29.9" or "INV-079837" after the name.
+  const caption = splitCaption(body.customerName);
+  const customerName = caption.name.slice(0, 200) || null;
+  const siteNote = String(body.siteNote || caption.dateText || '').trim().slice(0, 120) || null;
+  const invoiceHint = String(body.invoiceHint || body.invoiceNumberHint || caption.invoiceNo || '')
+    .trim().slice(0, 80) || null;
   let amount = null;
   if (body.amount != null && String(body.amount).trim() !== '') {
     amount = Number.isInteger(body.amount) ? body.amount : parsePaymentAmount(body.amount);
@@ -218,11 +260,25 @@ function parseHintsFromBody(body = {}) {
   return { customerName, siteNote, invoiceHint, amount, paidAt };
 }
 
-async function rematchPaymentDoc(payment, env) {
-  const amount = effectiveAmount(payment);
+/** Everything the matcher needs from a payment: caption first, then AI fields. */
+function matchInputs(payment) {
   const paidAt = effectivePaidAt(payment);
-  const customerName = matchCustomerName(payment);
-  const invoiceHint = payment.confirmed?.invoiceHint || null;
+  const siteNote = payment.confirmed?.siteNote || '';
+  const dateText = splitCaption(siteNote).dateText || siteNote;
+  return {
+    sender: payment.ai?.sender || null,
+    customerName: payment.confirmed?.customerName || null,
+    invoiceNumberHint: payment.confirmed?.invoiceHint || null,
+    invoiceDateHint: resolveCaptionDate(dateText, paidAt ? new Date(paidAt) : (payment.createdAt || new Date())),
+    amount: effectiveAmount(payment),
+    adminFee: payment.ai?.adminFee ?? null,
+    allowFee: humanAmount(payment) == null,
+    paidAt,
+    excludePaymentId: payment._id,
+  };
+}
+
+async function rematchPaymentDoc(payment, env) {
   let zohoInvoices = [];
   try {
     zohoInvoices = await loadZohoInvoices(env);
@@ -233,35 +289,43 @@ async function rematchPaymentDoc(payment, env) {
     payment.matchType = 'none';
     payment.zohoInvoiceId = '';
     payment.zohoCustomerId = '';
+    payment.bankFee = 0;
     payment.matchedInvoice = {
       invoiceNumber: '', customerName: '', remaining: null, dueDate: '', status: '',
     };
     payment.status = payment.statementVerified ? 'verified' : 'read';
     return;
   }
-  const match = await matchPayment({
-    sender: payment.ai?.sender,
-    customerName,
-    invoiceNumberHint: invoiceHint,
-    amount,
-    paidAt,
-    invoices: zohoInvoices,
-    excludePaymentId: payment._id,
-  });
+  const match = await matchPayment({ ...matchInputs(payment), invoices: zohoInvoices });
   applyMatchResult(payment, match);
   if (payment.statementVerified && payment.zohoInvoiceId) {
     payment.status = 'verified';
   }
 }
 
-let paymentReadQueue = Promise.resolve();
+// Read a few screenshots at once; more would hit the free-tier AI rate limit.
+const PAYMENT_READ_CONCURRENCY = 3;
+const paymentReadWaiting = [];
+let paymentReadsRunning = 0;
+
+function drainPaymentReads() {
+  while (paymentReadsRunning < PAYMENT_READ_CONCURRENCY && paymentReadWaiting.length) {
+    const { id, env } = paymentReadWaiting.shift();
+    paymentReadsRunning += 1;
+    processPayment(id, env)
+      .catch((error) => {
+        console.error('Payment processing failed', error.message);
+      })
+      .finally(() => {
+        paymentReadsRunning -= 1;
+        drainPaymentReads();
+      });
+  }
+}
 
 function queuePaymentRead(id, env) {
-  paymentReadQueue = paymentReadQueue
-    .then(() => processPayment(id, env))
-    .catch((error) => {
-      console.error('Payment processing failed', error.message);
-    });
+  paymentReadWaiting.push({ id, env });
+  drainPaymentReads();
 }
 
 /** AI read + Zoho match. Runs in the background after upload returns. */
@@ -300,6 +364,8 @@ export async function processPayment(id, env) {
     latest.ai = {
       sender: extraction.sender,
       amount: extraction.amount,
+      adminFee: extraction.adminFee,
+      total: extraction.total,
       paidAt: extraction.paidAt,
       reference: extraction.reference,
       recipient: extraction.recipient,
@@ -312,12 +378,10 @@ export async function processPayment(id, env) {
 
     if (latest.zohoInvoiceId) {
       // Accountant already matched; only refresh amount-based match type.
-      const amount = effectiveAmount(latest);
-      const remaining = latest.matchedInvoice?.remaining;
-      if (amount != null && Number.isInteger(remaining)) {
-        if (amount < remaining) latest.matchType = 'partial';
-        else if (amount > remaining) latest.matchType = 'over';
-        else latest.matchType = 'exact';
+      const fit = fitFor(latest, latest.matchedInvoice?.remaining);
+      if (fit) {
+        latest.matchType = fit.amountType;
+        latest.bankFee = fit.bankFee;
       }
       if (!['matched', 'verified', 'approved'].includes(latest.status)) {
         latest.status = latest.statementVerified ? 'verified' : 'matched';
@@ -339,15 +403,7 @@ export async function processPayment(id, env) {
         latest.status = 'read';
       } else {
         // WhatsApp caption (confirmed.customerName) beats bank sender name.
-        const match = await matchPayment({
-          sender: extraction.sender,
-          customerName: latest.confirmed?.customerName || null,
-          invoiceNumberHint: latest.confirmed?.invoiceHint || null,
-          amount: latest.confirmed?.amount ?? extraction.amount,
-          paidAt: latest.confirmed?.paidAt || extraction.paidAt,
-          invoices: zohoInvoices,
-          excludePaymentId: latest._id,
-        });
+        const match = await matchPayment({ ...matchInputs(latest), invoices: zohoInvoices });
         applyMatchResult(latest, match);
       }
     }
@@ -510,12 +566,9 @@ export async function setPaymentMatch(id, user, body = {}, env) {
     matchConfidence: payment.matchConfidence,
   };
 
-  const amount = effectiveAmount(payment);
-  let matchType = 'exact';
-  if (amount != null && Number.isInteger(amount)) {
-    if (amount < invoice.remaining) matchType = 'partial';
-    else if (amount > invoice.remaining) matchType = 'over';
-  }
+  const fit = fitFor(payment, invoice.remaining);
+  const matchType = fit ? fit.amountType : 'exact';
+  payment.bankFee = fit ? fit.bankFee : 0;
 
   payment.zohoInvoiceId = invoice.invoiceId;
   payment.zohoCustomerId = invoice.customerId;
@@ -589,10 +642,11 @@ export async function updatePaymentHints(id, user, body = {}, env) {
   if (payment.status === 'rejected') throw httpError(400, 'This payment was rejected.');
 
   const hints = parseHintsFromBody(body);
+  const caption = splitCaption(body.customerName);
   if (!payment.confirmed) payment.confirmed = {};
   if (body.customerName !== undefined) payment.confirmed.customerName = hints.customerName;
-  if (body.siteNote !== undefined) payment.confirmed.siteNote = hints.siteNote;
-  if (body.invoiceHint !== undefined || body.invoiceNumberHint !== undefined) {
+  if (body.siteNote !== undefined || caption.dateText) payment.confirmed.siteNote = hints.siteNote;
+  if (body.invoiceHint !== undefined || body.invoiceNumberHint !== undefined || caption.invoiceNo) {
     payment.confirmed.invoiceHint = hints.invoiceHint;
   }
   if (body.amount !== undefined) payment.confirmed.amount = hints.amount;
@@ -640,7 +694,8 @@ export async function approvePayment(id, user, body = {}, env) {
     throw httpError(400, 'Match a Zoho invoice before recording the payment.');
   }
 
-  const amount = effectiveAmount(payment);
+  // Bank admin fee on top of the Nominal is not money the business received.
+  const amount = receivedAmount(payment);
   if (amount == null || !Number.isInteger(amount) || amount <= 0) {
     throw httpError(400, 'Payment amount is missing or invalid.');
   }
@@ -660,6 +715,7 @@ export async function approvePayment(id, user, body = {}, env) {
   const dateIso = zohoPaymentDateIso(effectivePaidAt(payment) || new Date());
   const notes = [
     paymentNotes(payment),
+    payment.bankFee > 0 ? `Bank fee Rp ${payment.bankFee} not recorded` : '',
     excess > 0 ? `Excess Rp ${excess}${reason ? ` · ${reason}` : ''}` : '',
   ].filter(Boolean).join(' · ').slice(0, 200);
 
@@ -703,6 +759,7 @@ export async function approvePayment(id, user, body = {}, env) {
       zohoPaymentId: payment.zohoPaymentId,
       applied,
       amount,
+      bankFee: payment.bankFee || 0,
       date: dateIso,
     },
   });
@@ -734,12 +791,29 @@ export async function rejectPayment(id, user, reason) {
 }
 
 /**
+ * Search rank for one customer name. Spacing and "Toko"/"PT" are ignored, so
+ * "Toko Sariboga" finds "Toko Sari Boga". Returns null when it is not a hit.
+ */
+export function customerSearchRank(query, customerName) {
+  const plain = String(customerName || '').toLowerCase();
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return null;
+  if (plain.startsWith(q)) return 0;
+  const compactQ = compactName(q);
+  const compact = compactName(customerName);
+  if (compactQ && compact.startsWith(compactQ)) return 0;
+  if (plain.includes(q) || (compactQ && compact.includes(compactQ))) return 1;
+  const score = nameSimilarity(q, customerName);
+  return score >= WEAK_NAME ? 3 - score : null;
+}
+
+/**
  * Unpaid Zoho invoices for the Payments link UI.
- * With a keyword (e.g. "form"), return name / invoice# matches, name hits first.
+ * With a keyword, return name / invoice# matches, best name first, oldest invoice first.
  */
 export async function listOpenInvoices(env, search = '') {
   const invoices = await loadZohoInvoices(env);
-  const q = String(search || '').trim().toLowerCase();
+  const q = String(search || '').trim();
   const mapped = invoices.map((invoice) => ({
     id: invoice.invoiceId,
     invoiceNo: invoice.invoiceNo || invoice.invoiceNumber,
@@ -747,29 +821,31 @@ export async function listOpenInvoices(env, search = '') {
     paidAmount: null,
     remaining: invoice.remaining,
     status: invoice.status,
+    date: invoice.date || null,
     dueDate: invoice.dueDate,
     customerName: invoice.customerName,
     erpCustomerId: invoice.customerId,
   }));
   if (!q) return mapped.slice(0, 100);
 
+  // Score each customer once; customers have many open invoices.
+  const nameRanks = new Map();
+  const qInvoice = q.toLowerCase().replace(/\s+/g, '');
   const scored = [];
   for (const row of mapped) {
-    const name = String(row.customerName || '').toLowerCase();
-    const invoiceNo = String(row.invoiceNo || '').toLowerCase();
-    const nameStarts = name.startsWith(q);
-    const nameHas = name.includes(q);
-    const invHas = invoiceNo.includes(q);
-    if (!nameHas && !invHas) continue;
-    let rank = 3;
-    if (nameStarts) rank = 0;
-    else if (nameHas) rank = 1;
-    else rank = 2;
+    if (!nameRanks.has(row.customerName)) {
+      nameRanks.set(row.customerName, customerSearchRank(q, row.customerName));
+    }
+    let rank = nameRanks.get(row.customerName);
+    if (rank == null && String(row.invoiceNo || '').toLowerCase().includes(qInvoice)) rank = 2;
+    if (rank == null) continue;
     scored.push({ row, rank });
   }
   scored.sort((a, b) => {
     if (a.rank !== b.rank) return a.rank - b.rank;
-    return String(a.row.customerName || '').localeCompare(String(b.row.customerName || ''));
+    const byName = String(a.row.customerName || '').localeCompare(String(b.row.customerName || ''));
+    if (byName) return byName;
+    return String(a.row.date || a.row.dueDate || '').localeCompare(String(b.row.date || b.row.dueDate || ''));
   });
   return scored.slice(0, 40).map((entry) => entry.row);
 }

@@ -33,6 +33,20 @@ function isReading(status) {
   return status === 'uploaded' || status === 'processing';
 }
 
+/** Zoho invoice date "2026-09-29" → "29/09/2026". */
+function formatDay(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '—';
+}
+
+function fitLabel(candidate) {
+  if (candidate.fit === 'exact') return 'Exact';
+  if (candidate.fit === 'fee') return `Exact + fee ${formatRupiah(candidate.bankFee)}`;
+  if (candidate.fit === 'partial') return 'Partial';
+  if (candidate.fit === 'over') return 'Over';
+  return '';
+}
+
 function ReadSteps({ status, hasMatch, hasAmount }) {
   const step = status === 'failed' ? 0
     : status === 'uploaded' ? 1
@@ -197,6 +211,13 @@ export default function PaymentDetail() {
     });
   }
 
+  async function switchInvoice(invoiceId) {
+    await run(async () => {
+      await matchPayment(id, { invoiceId });
+      setMessage('Invoice changed.');
+    });
+  }
+
   async function onDelete() {
     if (!window.confirm('Delete this payment and its screenshot? This cannot be undone.')) return;
     setBusy(true);
@@ -231,6 +252,12 @@ export default function PaymentDetail() {
   const canDelete = !reading && !payment.zohoPaymentId;
   const amount = payment.amountReceived ?? payment.ai?.amount;
   const hasAmount = amount != null;
+  const adminFee = payment.ai?.adminFee || payment.bankFee || 0;
+  const shortBy = invoice && hasAmount && invoice.remaining > amount ? invoice.remaining - amount : 0;
+  const sameCustomer = (payment.candidates || []).filter(
+    (c) => invoice && c.customerId === payment.matchedCustomerId,
+  );
+  const matchNote = (payment.matchReasons || [])[0] || '';
 
   return (
     <>
@@ -298,11 +325,26 @@ export default function PaymentDetail() {
               </div>
             )}
             <div>
-              <dt>Amount</dt>
+              <dt>Received</dt>
               <dd className={!hasAmount && reading ? 'payment-pulse-text' : undefined}>
                 {hasAmount ? formatRupiah(amount) : (reading ? 'Reading…' : '—')}
               </dd>
             </div>
+            {adminFee > 0 && (
+              <div>
+                <dt>Bank fee</dt>
+                <dd>
+                  {formatRupiah(adminFee)}
+                  <span className="hint"> · paid by sender, not recorded</span>
+                </dd>
+              </div>
+            )}
+            {payment.ai?.total != null && payment.ai.total !== amount && (
+              <div>
+                <dt>Total transfer</dt>
+                <dd>{formatRupiah(payment.ai.total)}</dd>
+              </div>
+            )}
             <div>
               <dt>Time</dt>
               <dd className={!payment.ai?.paidAt && reading ? 'payment-pulse-text' : undefined}>
@@ -332,6 +374,47 @@ export default function PaymentDetail() {
               <div><dt>Due</dt><dd>{formatRupiah(invoice.remaining)}</dd></div>
               <div><dt>Zoho mode</dt><dd>Bank Transfer</dd></div>
             </dl>
+          )}
+
+          {invoice && matchNote && <p className="hint payment-match-note">{matchNote}</p>}
+          {invoice && shortBy > 0 && (
+            <p className="message message-warn">
+              {formatRupiah(shortBy)} short — Zoho will keep this invoice partly unpaid.
+            </p>
+          )}
+          {invoice && payment.amountExcess > 0 && (
+            <p className="message message-warn">
+              {formatRupiah(payment.amountExcess)} more than the invoice — Zoho keeps it as customer credit.
+            </p>
+          )}
+
+          {canFindCustomer && sameCustomer.length > 1 && (
+            <div className="payment-invoice-pick">
+              <p className="field-label">Unpaid invoices for {invoice.customer?.name}</p>
+              <ul className="name-suggest-list">
+                {sameCustomer.map((c) => {
+                  const current = String(c.invoiceId) === String(payment.matchedInvoiceId);
+                  return (
+                    <li key={c.invoiceId}>
+                      <button
+                        type="button"
+                        className={current ? 'is-current' : undefined}
+                        disabled={busy || current}
+                        aria-pressed={current}
+                        onClick={() => switchInvoice(c.invoiceId)}
+                      >
+                        <strong>
+                          {current ? '✓ ' : ''}{c.invoiceNo} · {formatDay(c.date)}
+                        </strong>
+                        <span className="hint">
+                          {formatRupiah(c.remaining)}{fitLabel(c) ? ` · ${fitLabel(c)}` : ''}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
 
           {canFindCustomer && !invoice && (
@@ -437,7 +520,9 @@ export default function PaymentDetail() {
                   setMessage('Recorded in Zoho as Bank Transfer.');
                 })}
               >
-                {busy ? 'Recording…' : 'Record Bank Transfer in Zoho'}
+                {busy
+                  ? 'Recording…'
+                  : (hasAmount ? `Record ${formatRupiah(amount)} Bank Transfer in Zoho` : 'Record Bank Transfer in Zoho')}
               </button>
               {!hasAmount && (
                 <p className="hint">Record unlocks when the amount is read from the screenshot.</p>

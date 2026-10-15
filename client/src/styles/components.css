@@ -381,6 +381,14 @@ a.btn {
 .payment-capture { margin-bottom: var(--space-4); }
 .payment-capture .field { display: grid; gap: var(--space-1); margin: var(--space-3) 0; }
 .payment-name-note { font-weight: 400; grid-column: 1 / -1; }
+.payment-match-note { margin: var(--space-3) 0 0; }
+.payment-invoice-pick { margin-top: var(--space-3); }
+.payment-invoice-pick .name-suggest-list { max-height: 320px; }
+.name-suggest-list button.is-current {
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+  cursor: default;
+}
 .btn.is-disabled,
 label.btn.is-disabled {
   opacity: 0.55;

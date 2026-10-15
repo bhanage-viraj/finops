@@ -6,7 +6,9 @@ Return JSON only that matches the schema. Do not invent values you cannot see.
 Extract:
 - sender: Sumber Dana / From / pengirim — the person or company who sent the money. Not the recipient (Tujuan).
 - recipient: Tujuan / penerima (often the company account), if shown.
-- amount: the transfer Nominal only, as an integer string of rupiah with no currency symbol and no thousand separators. Example: Rp480.000 → "480000". Never use Biaya Admin / admin fee as the amount.
+- amount: the transfer Nominal only, as an integer string of rupiah with no currency symbol and no thousand separators. Example: Rp480.000 → "480000". Not Total Transaksi, not Biaya Admin.
+- adminFee: Biaya Admin / admin fee as an integer string, or null if not shown. Example: Rp2.500 → "2500".
+- total: Total Transaksi (Nominal plus admin fee) as an integer string, or null if not shown. Example: Rp482.500 → "482500".
 - paidAt: transaction date and time as ISO-8601 UTC if possible, or local ISO without timezone (YYYY-MM-DDTHH:mm:ss). Parse day-month-year Indonesian/English dates such as "30 September 2026, 07:36".
 - reference: No. Ref / reference / transaction number if shown.
 - transferMethod: e.g. BI-FAST, RTOL, Transfer, if shown.

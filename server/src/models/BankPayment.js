@@ -20,6 +20,8 @@ const bankPaymentSchema = new Schema({
   ai: {
     sender: { type: String, default: null },
     amount: integerRupiahField(),
+    adminFee: integerRupiahField(),
+    total: integerRupiahField(),
     paidAt: { type: Date, default: null },
     reference: { type: String, default: null },
     recipient: { type: String, default: null },
@@ -59,6 +61,8 @@ const bankPaymentSchema = new Schema({
     enum: ['high', 'medium', 'low'],
     default: undefined,
   },
+  // Rupiah above the invoice treated as the sender's bank fee; not recorded in Zoho.
+  bankFee: { ...integerRupiahField(), default: 0 },
   matchReasons: { type: [String], default: [] },
   matchCandidates: { type: [Schema.Types.Mixed], default: [] },
   flags: { type: [String], default: [] },
