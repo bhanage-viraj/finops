@@ -178,6 +178,11 @@ function applyMatchResult(payment, match) {
       status: match.matched.status || '',
     };
     payment.status = 'matched';
+    // Prefill caption so the list/detail show the Zoho customer without retyping.
+    if (!payment.confirmed) payment.confirmed = {};
+    if (!payment.confirmed.customerName && match.matched.customerName) {
+      payment.confirmed.customerName = match.matched.customerName;
+    }
   } else {
     payment.matchedInvoice = {
       invoiceNumber: '',
@@ -281,10 +286,13 @@ export async function processPayment(id, env) {
   }
 
   try {
-    const extraction = await readPaymentScreenshot(env, {
-      mimeType: payment.mimeType,
-      bytes,
-    });
+    // AI read and Zoho unpaid list in parallel — caption already has the customer name.
+    const [visionOutcome, zohoOutcome] = await Promise.allSettled([
+      readPaymentScreenshot(env, { mimeType: payment.mimeType, bytes }),
+      loadZohoInvoices(env),
+    ]);
+    if (visionOutcome.status !== 'fulfilled') throw visionOutcome.reason;
+    const extraction = visionOutcome.value;
 
     // Reload so a customer pick made while AI ran is not overwritten.
     const latest = await BankPayment.findById(id);
@@ -317,10 +325,10 @@ export async function processPayment(id, env) {
     } else {
       let zohoInvoices = [];
       let zohoError = '';
-      try {
-        zohoInvoices = await loadZohoInvoices(env);
-      } catch (error) {
-        zohoError = error.message || 'Zoho invoices could not be loaded.';
+      if (zohoOutcome.status === 'fulfilled') {
+        zohoInvoices = zohoOutcome.value;
+      } else {
+        zohoError = zohoOutcome.reason?.message || 'Zoho invoices could not be loaded.';
       }
 
       if (zohoError) {
@@ -330,9 +338,10 @@ export async function processPayment(id, env) {
         latest.matchType = 'none';
         latest.status = 'read';
       } else {
+        // WhatsApp caption (confirmed.customerName) beats bank sender name.
         const match = await matchPayment({
           sender: extraction.sender,
-          customerName: latest.confirmed?.customerName || extraction.sender,
+          customerName: latest.confirmed?.customerName || null,
           invoiceNumberHint: latest.confirmed?.invoiceHint || null,
           amount: latest.confirmed?.amount ?? extraction.amount,
           paidAt: latest.confirmed?.paidAt || extraction.paidAt,

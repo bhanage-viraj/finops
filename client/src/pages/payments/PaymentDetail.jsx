@@ -40,7 +40,7 @@ function ReadSteps({ status, hasMatch, hasAmount }) {
         : hasAmount || hasMatch ? 3 : 2;
   const items = [
     { n: 1, label: 'Saved' },
-    { n: 2, label: 'Reading screenshot' },
+    { n: 2, label: 'Reading amount' },
     { n: 3, label: 'Ready to record' },
   ];
   return (
@@ -93,6 +93,15 @@ export default function PaymentDetail() {
     });
   }
 
+  function seedQuery(row) {
+    // WhatsApp caption first — bank sender is often a different person.
+    const name = row.confirmed?.customerName
+      || row.invoice?.customer?.name
+      || row.ai?.sender
+      || '';
+    if (name) setQuery((prev) => prev || name);
+  }
+
   useEffect(() => {
     startedAt.current = Date.now();
     load().catch((err) => setError(err.message));
@@ -110,14 +119,17 @@ export default function PaymentDetail() {
       fetchPayment(id)
         .then((body) => {
           setPayment(body.payment);
-          if (body.payment.confirmed?.customerName) {
-            setQuery((prev) => prev || body.payment.confirmed.customerName);
-          }
+          seedQuery(body.payment);
         })
         .catch(() => {});
     }, 1500);
     return () => clearInterval(timer);
   }, [id, payment?.status]);
+
+  useEffect(() => {
+    if (!payment || isReading(payment.status)) return;
+    seedQuery(payment);
+  }, [payment?.status, payment?.ai?.sender, payment?.confirmed?.customerName, payment?.matchedInvoiceId]);
 
   useEffect(() => {
     if (!payment || !isReading(payment.status)) {
@@ -145,6 +157,9 @@ export default function PaymentDetail() {
         .then((body) => {
           if (seq !== suggestSeq.current) return;
           setSuggestions(body.invoices || []);
+          if (!payment?.matchedInvoiceId && (body.invoices || []).length > 0) {
+            setShowSuggestions(true);
+          }
         })
         .catch(() => {
           if (seq !== suggestSeq.current) return;
@@ -155,7 +170,7 @@ export default function PaymentDetail() {
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [query, canReview, payment?.status]);
+  }, [query, canReview, payment?.status, payment?.matchedInvoiceId]);
 
   async function run(action) {
     setBusy(true);
@@ -178,9 +193,7 @@ export default function PaymentDetail() {
     await run(async () => {
       await updatePaymentHints(id, { customerName: row.customerName || '' });
       await matchPayment(id, { invoiceId: row.id });
-      setMessage(isReading(payment?.status)
-        ? 'Customer saved. Amount will fill in when reading finishes.'
-        : 'Customer matched.');
+      setMessage('Customer matched.');
     });
   }
 
@@ -203,6 +216,13 @@ export default function PaymentDetail() {
 
   const invoice = payment.invoice;
   const reading = isReading(payment.status);
+  const whatsappName = payment.confirmed?.customerName || '';
+  const bankSender = payment.ai?.sender || '';
+  const namesDiffer = Boolean(
+    whatsappName
+    && bankSender
+    && whatsappName.trim().toLowerCase() !== bankSender.trim().toLowerCase(),
+  );
   const canFindCustomer = canReview && !['approved', 'rejected', 'failed'].includes(payment.status);
   const canRecord = canReview
     && !reading
@@ -235,22 +255,19 @@ export default function PaymentDetail() {
         <p className="message message-bad">{payment.failureMessage}</p>
       )}
 
-      {(reading || payment.status === 'read' || payment.status === 'matched') && (
+      {reading && (
         <section className="card payment-progress-card">
           <ReadSteps
             status={payment.status}
             hasMatch={Boolean(payment.matchedInvoiceId)}
             hasAmount={hasAmount}
           />
-          {reading && (
-            <p className="hint">
-              AI is reading the bank screenshot{elapsed > 0 ? ` (${elapsed}s)` : ''}.
-              Find the customer below now — do not wait for the amount.
-            </p>
-          )}
-          {!reading && payment.matchedInvoiceId && hasAmount && (
-            <p className="hint">Ready. Check the amount, then record in Zoho.</p>
-          )}
+          <p className="hint">
+            {whatsappName
+              ? `Matching “${whatsappName}” in Zoho while reading the screenshot`
+              : 'Reading screenshot'}
+            {elapsed > 0 ? ` (${elapsed}s)` : ''}…
+          </p>
         </section>
       )}
 
@@ -263,11 +280,23 @@ export default function PaymentDetail() {
           )}
           <dl className="field-list">
             <div>
-              <dt>From bank</dt>
-              <dd className={!payment.ai?.sender && reading ? 'payment-pulse-text' : undefined}>
-                {payment.ai?.sender || (reading ? 'Reading…' : '—')}
+              <dt>WhatsApp name</dt>
+              <dd>{whatsappName || '—'}</dd>
+            </div>
+            <div>
+              <dt>Bank sender</dt>
+              <dd className={!bankSender && reading ? 'payment-pulse-text' : undefined}>
+                {bankSender || (reading ? 'Reading…' : '—')}
               </dd>
             </div>
+            {namesDiffer && (
+              <div>
+                <dt />
+                <dd className="hint payment-name-note">
+                  Bank sender can differ from the shop name — Zoho match uses the WhatsApp name.
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Amount</dt>
               <dd className={!hasAmount && reading ? 'payment-pulse-text' : undefined}>
@@ -280,14 +309,35 @@ export default function PaymentDetail() {
                 {payment.ai?.paidAt ? formatWhen(payment.ai.paidAt) : (reading ? 'Reading…' : '—')}
               </dd>
             </div>
+            {payment.ai?.transferMethod && (
+              <div>
+                <dt>Method</dt>
+                <dd>{payment.ai.transferMethod}</dd>
+              </div>
+            )}
+            {payment.ai?.reference && (
+              <div>
+                <dt>Ref</dt>
+                <dd>{payment.ai.reference}</dd>
+              </div>
+            )}
           </dl>
         </section>
 
         <section className="card">
-          {canFindCustomer && (
+          {invoice && (
+            <dl className="field-list">
+              <div><dt>Invoice</dt><dd>{invoice.invoiceNo}</dd></div>
+              <div><dt>Customer</dt><dd>{invoice.customer?.name || '—'}</dd></div>
+              <div><dt>Due</dt><dd>{formatRupiah(invoice.remaining)}</dd></div>
+              <div><dt>Zoho mode</dt><dd>Bank Transfer</dd></div>
+            </dl>
+          )}
+
+          {canFindCustomer && !invoice && (
             <div className="name-suggest">
               <label>
-                Find customer
+                Find customer in Zoho
                 <input
                   value={query}
                   onChange={(event) => {
@@ -296,18 +346,14 @@ export default function PaymentDetail() {
                   }}
                   onFocus={() => setShowSuggestions(true)}
                   onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                  placeholder="Type a name while it reads…"
+                  placeholder="Customer name from WhatsApp"
                   autoComplete="off"
-                  autoFocus={reading}
                 />
               </label>
-              {reading && (
-                <p className="hint">You can pick the customer before the AI finishes.</p>
-              )}
               {showSuggestions && query.trim().length >= 2 && (
                 <div>
                   {suggesting && <p className="hint">Searching…</p>}
-                  {!suggesting && suggestions.length === 0 && <p className="hint">No match</p>}
+                  {!suggesting && suggestions.length === 0 && <p className="hint">No unpaid invoice match</p>}
                   {suggestions.length > 0 && (
                     <ul className="name-suggest-list" role="listbox">
                       {suggestions.map((row) => (
@@ -331,15 +377,51 @@ export default function PaymentDetail() {
             </div>
           )}
 
-          {invoice ? (
-            <dl className="field-list">
-              <div><dt>Invoice</dt><dd>{invoice.invoiceNo}</dd></div>
-              <div><dt>Customer</dt><dd>{invoice.customer?.name || '—'}</dd></div>
-              <div><dt>Due</dt><dd>{formatRupiah(invoice.remaining)}</dd></div>
-            </dl>
-          ) : canFindCustomer ? (
-            <p className="hint">{reading ? 'Pick a customer now.' : 'Pick a customer.'}</p>
-          ) : null}
+          {canFindCustomer && invoice && (
+            <details className="payment-change-customer">
+              <summary>Wrong customer? Change</summary>
+              <div className="name-suggest">
+                <label>
+                  Find customer
+                  <input
+                    value={query}
+                    onChange={(event) => {
+                      setQuery(event.target.value);
+                      setShowSuggestions(true);
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                    placeholder="Customer name"
+                    autoComplete="off"
+                  />
+                </label>
+                {showSuggestions && query.trim().length >= 2 && (
+                  <div>
+                    {suggesting && <p className="hint">Searching…</p>}
+                    {!suggesting && suggestions.length === 0 && <p className="hint">No match</p>}
+                    {suggestions.length > 0 && (
+                      <ul className="name-suggest-list" role="listbox">
+                        {suggestions.map((row) => (
+                          <li key={row.id}>
+                            <button
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => pickSuggestion(row)}
+                            >
+                              <strong>{row.customerName || '—'}</strong>
+                              <span className="hint">
+                                {row.invoiceNo} · {formatRupiah(row.remaining)}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
 
           {canRecord && (
             <div className="stack-form">
@@ -352,25 +434,19 @@ export default function PaymentDetail() {
                   if (!hasAmount) throw new Error('Wait for the amount to finish reading.');
                   if (!payment.statementVerified) await verifyPayment(id);
                   await approvePayment(id, {});
-                  setMessage('Recorded in Zoho.');
+                  setMessage('Recorded in Zoho as Bank Transfer.');
                 })}
               >
-                {busy ? 'Recording…' : 'Record in Zoho'}
+                {busy ? 'Recording…' : 'Record Bank Transfer in Zoho'}
               </button>
               {!hasAmount && (
-                <p className="hint">Record unlocks when the amount is read.</p>
+                <p className="hint">Record unlocks when the amount is read from the screenshot.</p>
               )}
             </div>
           )}
 
-          {reading && payment.matchedInvoiceId && (
-            <p className="message message-ok">
-              Customer ready. Record unlocks when the amount appears.
-            </p>
-          )}
-
           {payment.status === 'approved' && (
-            <p className="message message-ok">Saved in Zoho.</p>
+            <p className="message message-ok">Saved in Zoho as Bank Transfer.</p>
           )}
         </section>
       </div>

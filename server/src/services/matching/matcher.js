@@ -199,7 +199,13 @@ export async function matchPayment({
       flags.push('unidentified');
     } else {
       const amountOnly = candidates.filter((c) => c.amountType === 'exact' && c.dateOk);
-      if (amountOnly.length === 1 && (!matchName || scoredCustomers.length === 0)) {
+      // Unique exact amount + at least a weak name → auto-suggest (medium).
+      if (amountOnly.length === 1 && amountOnly[0].nameScore >= WEAK_NAME) {
+        matched = amountOnly[0];
+        matchConfidence = 'medium';
+        matchType = 'exact';
+        reasons.push('Exact amount with a usable name match.');
+      } else if (amountOnly.length === 1 && (!matchName || scoredCustomers.length === 0)) {
         matched = amountOnly[0];
         matchConfidence = 'low';
         matchType = 'exact';

@@ -378,6 +378,26 @@ a.btn {
   animation: payment-pulse 1.2s ease-in-out infinite;
 }
 .payment-reading-row td { background: var(--accent-soft); }
+.payment-capture { margin-bottom: var(--space-4); }
+.payment-capture .field { display: grid; gap: var(--space-1); margin: var(--space-3) 0; }
+.payment-name-note { font-weight: 400; grid-column: 1 / -1; }
+.btn.is-disabled,
+label.btn.is-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+.payment-change-customer {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.payment-change-customer summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
 @keyframes payment-pulse {
   0%, 100% { opacity: 0.55; }
   50% { opacity: 1; }

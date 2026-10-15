@@ -7,7 +7,8 @@ import { assertPaymentExtraction, paymentExtractionSchema } from './schemas.js';
 const promptDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../prompts');
 const paymentPrompt = fs.readFileSync(path.join(promptDir, 'payment.prompt.txt'), 'utf8');
 
-const FALLBACK_MODELS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite'];
+// Lite first — payments need amount/date fast; caption already carries the customer name.
+const FALLBACK_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash'];
 
 function quotaBlocked(error) {
   return /quota|rate limit|rate-limit/i.test(error.message || '');
@@ -32,7 +33,8 @@ function retryable(error) {
 }
 
 function modelsFor(primary) {
-  return [...new Set([primary, ...FALLBACK_MODELS].filter(Boolean))];
+  // Always try lite before the heavier flash models for bank screenshots.
+  return [...new Set(['gemini-3.5-flash-lite', primary, ...FALLBACK_MODELS].filter(Boolean))];
 }
 
 async function once(request) {
