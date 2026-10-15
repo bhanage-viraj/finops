@@ -14,6 +14,12 @@ const CARDS = [
   ['failed', 'Failed', '/documents?status=failed'],
 ];
 
+const WORKFLOWS = [
+  ['/documents', 'Documents', 'Review and approve expense receipts'],
+  ['/payments', 'Payments', 'Match bank transfer screenshots'],
+  ['/follow-up', 'Follow-up', 'Remind overdue customers'],
+];
+
 function ZohoConnect() {
   const [settings, setSettings] = useState(null);
   const [message, setMessage] = useState('');
@@ -128,12 +134,18 @@ export default function Dashboard() {
 
   return (
     <>
-      <h1>Overview</h1>
-      <p className="hint">
-        Take photo uploads an expense receipt — the same action as on Documents. Bank transfer screenshots go under Payments.
-      </p>
-      <UploadDropzone />
+      <div className="page-head">
+        <h1>Overview</h1>
+      </div>
+
+      <UploadDropzone
+        title="Scan expense receipt"
+        hint="Photograph a fuel slip, supplier receipt, or work order. Bank transfers go to Payments."
+      />
+
       {error && <p className="message message-bad">{error}</p>}
+
+      <h2 className="section-title">Receipt status</h2>
       <div className="stat-grid">
         {CARDS.map(([key, label, to]) => (
           <Link key={key} to={to} className="card stat-card">
@@ -142,6 +154,17 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
+
+      <h2 className="section-title">Go to</h2>
+      <div className="workflow-grid">
+        {WORKFLOWS.map(([to, label, text]) => (
+          <Link key={to} to={to} className="card workflow-card">
+            <strong>{label}</strong>
+            <p className="hint">{text}</p>
+          </Link>
+        ))}
+      </div>
+
       {admin && <ZohoConnect />}
     </>
   );

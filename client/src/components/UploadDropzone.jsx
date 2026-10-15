@@ -3,7 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { uploadDocuments } from '../api/documents.js';
 import { compressImage } from '../utils/compressImage.js';
 
-export default function UploadDropzone({ onUploaded, upload = uploadDocuments }) {
+export default function UploadDropzone({
+  onUploaded,
+  upload = uploadDocuments,
+  title = 'Receipt photo',
+  hint = 'Take the photo on this phone. It is saved and read here.',
+}) {
   const navigate = useNavigate();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -120,8 +125,8 @@ export default function UploadDropzone({ onUploaded, upload = uploadDocuments })
           send(event.dataTransfer.files, event.dataTransfer.files.length === 1);
         }}
       >
-        <h2>Receipt photo</h2>
-        <p className="hint">Take the photo on this phone. It is saved and read here.</p>
+        <h2>{title}</h2>
+        <p className="hint">{hint}</p>
         <div className="capture-actions">
           {fileCamera ? (
             <label className="btn btn-primary btn-camera">

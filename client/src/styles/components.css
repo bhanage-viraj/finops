@@ -91,6 +91,24 @@ a { color: var(--accent); }
 
 .stat-card { text-decoration: none; color: inherit; }
 .stat-number { margin: 0; font-size: var(--text-number); font-weight: 700; }
+.section-title {
+  margin: var(--space-5) 0 var(--space-3);
+  font-size: 1rem;
+}
+.workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.workflow-card {
+  text-decoration: none;
+  color: inherit;
+  display: grid;
+  gap: var(--space-1);
+}
+.workflow-card strong { font-size: 1rem; }
+.workflow-card .hint { margin: 0; }
 
 .btn {
   min-height: 44px;
@@ -274,6 +292,7 @@ a.btn {
   margin-bottom: var(--space-4);
 }
 .page-head h1 { margin: 0; }
+.page-head .title-row { margin: 0; }
 .page-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .payment-shot {
   display: block;
@@ -505,7 +524,7 @@ a.btn {
   .content:has(.capture-card) {
     padding-bottom: calc(148px + env(safe-area-inset-bottom));
   }
-  .stat-grid, .review-grid, .line-grid { grid-template-columns: 1fr; }
+  .stat-grid, .review-grid, .line-grid, .workflow-grid { grid-template-columns: 1fr; }
   /* Follow-up keeps the table on phone (no separate card list). */
   .table-wrap.followup-list { display: block; }
   .payment-steps { grid-template-columns: 1fr; }

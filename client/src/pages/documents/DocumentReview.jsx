@@ -175,9 +175,33 @@ export default function DocumentReview() {
   return (
     <>
       <p className="crumb"><Link to="/documents">Documents</Link></p>
-      <div className="title-row">
-        <h1>{document.typeLabel}</h1>
-        <StatusBadge status={document.status} />
+      <div className="page-head">
+        <div className="title-row">
+          <h1>{document.typeLabel}</h1>
+          <StatusBadge status={document.status} />
+        </div>
+        {canChangeFile && (
+          <div className="page-actions">
+            <input
+              ref={replaceInputRef}
+              type="file"
+              accept="image/*,application/pdf"
+              hidden
+              onChange={onReplace}
+            />
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={fileBusy}
+              onClick={() => replaceInputRef.current?.click()}
+            >
+              {fileBusy ? 'Working…' : 'Replace photo'}
+            </button>
+            <button type="button" className="btn btn-secondary" disabled={fileBusy} onClick={onDelete}>
+              Delete
+            </button>
+          </div>
+        )}
       </div>
       {['uploaded', 'processing'].includes(document.status) && (
         <p className="message message-warn">Reading the receipt. Stay on this page.</p>
@@ -282,31 +306,9 @@ export default function DocumentReview() {
                 {document.status === 'failed' && (
                   <button type="button" className="btn btn-primary" onClick={() => run(() => retryDocument(id))}>Retry reading</button>
                 )}
-                {canChangeFile && (
-                  <>
-                    <input
-                      ref={replaceInputRef}
-                      type="file"
-                      accept="image/*,application/pdf"
-                      hidden
-                      onChange={onReplace}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={fileBusy}
-                      onClick={() => replaceInputRef.current?.click()}
-                    >
-                      {fileBusy ? 'Working…' : 'Replace photo'}
-                    </button>
-                    <button type="button" className="btn btn-secondary" disabled={fileBusy} onClick={onDelete}>
-                      Delete
-                    </button>
-                  </>
-                )}
               </div>
               {canChangeFile && (
-                <p className="hint">Wrong photo or data? Replace the file to re-read it, or delete this receipt.</p>
+                <p className="hint">Wrong photo? Use Replace photo or Delete at the top of this page.</p>
               )}
             </>
         </section>

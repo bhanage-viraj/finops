@@ -52,10 +52,11 @@ export default function DocumentQueue() {
   return (
     <>
       <h1>Documents</h1>
-      <p className="hint">
-        Expense receipts only (fuel, supplier, work orders). Same Take photo as Overview. Use Payments for bank screenshots.
-      </p>
-      <UploadDropzone onUploaded={load} />
+      <UploadDropzone
+        onUploaded={load}
+        title="Add receipt"
+        hint="Fuel, supplier, work order, or other expense photo. Open a receipt to replace or delete it."
+      />
       <div className="filters">
         <select aria-label="Document type" value={filters.type} onChange={(event) => setFilter('type', event.target.value)}>
           {TYPES.map(([value, label]) => <option key={value || 'all'} value={value}>{label}</option>)}
