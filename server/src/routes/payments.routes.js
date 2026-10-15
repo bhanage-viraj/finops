@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  approve, detail, file, hints, list, match, openInvoices, reject, uploadPayments, verify,
+  approve, detail, file, hints, list, match, openInvoices, reject, remove, uploadPayments, verify,
 } from '../controllers/payments.controller.js';
 import { requireAuth } from '../middleware/auth.js';
 import { killSwitch } from '../middleware/killSwitch.js';
@@ -21,6 +21,7 @@ export function createPaymentsRouter(env) {
   router.post('/', staff, upload, uploadPayments(env));
   router.get('/:id/file', file(env));
   router.get('/:id', detail());
+  router.delete('/:id', staff, remove(env));
   router.patch('/:id/hints', accountant, killSwitch, hints(env));
   router.patch('/:id/match', accountant, killSwitch, match(env));
   router.post('/:id/verify', accountant, verify());

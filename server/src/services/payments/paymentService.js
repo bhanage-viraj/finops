@@ -768,3 +768,28 @@ export async function listOpenInvoices(env, search = '') {
 export function fileKeyFor(payment) {
   return { key: payment.imageKey, mimeType: payment.mimeType };
 }
+
+export async function deletePayment(id, user, env) {
+  const payment = await loadPayment(id, user);
+  if (payment.status === 'processing' || payment.status === 'uploaded') {
+    throw httpError(400, 'This screenshot is still being read. Wait a moment, then try again.');
+  }
+  if (payment.zohoPaymentId) {
+    throw httpError(400, 'This payment was already recorded in Zoho. Reverse it there first.');
+  }
+  const key = payment.imageKey;
+  await writeAudit({
+    userId: user.id,
+    action: 'delete',
+    entity: 'bankPayments',
+    entityId: payment._id,
+    before: { status: payment.status, originalName: payment.originalName },
+  });
+  await BankPayment.deleteOne({ _id: payment._id });
+  if (key) {
+    await createFileStorage(env.upload.dir).remove(key).catch((error) => {
+      console.error('Could not remove payment screenshot', key, error.message);
+    });
+  }
+  return { id: String(id), deleted: true };
+}

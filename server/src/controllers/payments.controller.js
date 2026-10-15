@@ -2,6 +2,7 @@ import { createFileStorage } from '../services/storage/fileStorage.js';
 import {
   approvePayment,
   createPayments,
+  deletePayment,
   fileKeyFor,
   getPayment,
   listOpenInvoices,
@@ -89,6 +90,12 @@ export function approve(env) {
 export function reject() {
   return asyncHandler(async (req, res) => {
     res.json({ payment: await rejectPayment(req.params.id, req.user, req.body?.reason) });
+  });
+}
+
+export function remove(env) {
+  return asyncHandler(async (req, res) => {
+    res.json(await deletePayment(req.params.id, req.user, env));
   });
 }
 

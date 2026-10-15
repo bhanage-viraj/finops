@@ -42,6 +42,10 @@ export function rejectPayment(id, reason) {
   return api(`/payments/${id}/reject`, { method: 'POST', json: { reason } });
 }
 
+export function deletePayment(id) {
+  return api(`/payments/${id}`, { method: 'DELETE' });
+}
+
 export function fetchOpenInvoices(q = '') {
   const suffix = q ? `?q=${encodeURIComponent(q)}` : '';
   return api(`/payments/invoices/open${suffix}`);

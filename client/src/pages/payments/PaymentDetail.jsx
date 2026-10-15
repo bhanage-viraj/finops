@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   approvePayment,
+  deletePayment,
   fetchOpenInvoices,
   fetchPayment,
   fetchPaymentFile,
@@ -63,6 +64,7 @@ function ReadSteps({ status, hasMatch, hasAmount }) {
 
 export default function PaymentDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const canReview = user?.role === 'accountant' || user?.role === 'admin';
   const [payment, setPayment] = useState(null);
@@ -182,6 +184,20 @@ export default function PaymentDetail() {
     });
   }
 
+  async function onDelete() {
+    if (!window.confirm('Delete this payment and its screenshot? This cannot be undone.')) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      await deletePayment(id);
+      navigate('/payments');
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
   if (!payment && !error) return <p className="hint">Loading…</p>;
   if (!payment) return <p className="message message-bad">{error}</p>;
 
@@ -192,6 +208,7 @@ export default function PaymentDetail() {
     && !reading
     && !['approved', 'rejected', 'failed'].includes(payment.status)
     && Boolean(payment.matchedInvoiceId);
+  const canDelete = !reading && !payment.zohoPaymentId;
   const amount = payment.amountReceived ?? payment.ai?.amount;
   const hasAmount = amount != null;
 
@@ -199,8 +216,17 @@ export default function PaymentDetail() {
     <>
       <p><Link to="/payments">← Payments</Link></p>
       <div className="page-head">
-        <h1>Payment</h1>
-        <StatusBadge status={payment.status} />
+        <div className="title-row">
+          <h1>Payment</h1>
+          <StatusBadge status={payment.status} />
+        </div>
+        {canDelete && (
+          <div className="page-actions">
+            <button type="button" className="btn btn-secondary" disabled={busy} onClick={onDelete}>
+              Delete
+            </button>
+          </div>
+        )}
       </div>
 
       {error && <p className="message message-bad">{error}</p>}
