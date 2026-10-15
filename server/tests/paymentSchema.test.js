@@ -13,6 +13,17 @@ test('Rp formats with dots parse to integer rupiah', () => {
   assert.equal(parsePaymentAmount('28000'), 28000);
 });
 
+test('English-format bank amounts parse to the same integer rupiah', () => {
+  assert.equal(parsePaymentAmount('IDR 9,438,800.00'), 9438800);
+  assert.equal(parsePaymentAmount('1,200,000'), 1200000);
+  assert.equal(parsePaymentAmount('Rp9.438.800,00'), 9438800);
+});
+
+test('Mandiri month-first date keeps the local clock time', () => {
+  const date = parsePaymentDate('Oct 01, 2026 22:04:43 (GMT +7)');
+  assert.equal(date.toISOString(), '2026-10-01T22:04:00.000Z');
+});
+
 test('Indonesian long date parses to a Date', () => {
   const date = parsePaymentDate('30 September 2026, 07:36');
   assert.ok(date instanceof Date);

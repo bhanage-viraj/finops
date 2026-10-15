@@ -1,7 +1,9 @@
 import Setting from '../../models/Setting.js';
 import { listOverdueInvoices, missingZohoConfig } from '../../integrations/erp/zohoBooks.js';
 import { httpError } from '../../utils/http.js';
-import { draftWhatsAppMessage, rankOverdueInvoices } from './rank.js';
+import {
+  REMINDER_TEXT, draftCombinedWhatsAppMessage, draftWhatsAppMessage, groupOverdueByCustomer, rankOverdueInvoices,
+} from './rank.js';
 
 export async function todayFollowUp(user, env, deps = {}) {
   if (user.role !== 'accountant' && user.role !== 'admin') {
@@ -22,5 +24,21 @@ export async function todayFollowUp(user, env, deps = {}) {
     ...invoice,
     messageDraft: draftWhatsAppMessage(invoice),
   }));
-  return { asOf: new Date().toISOString().slice(0, 10), invoices };
+  const customers = groupOverdueByCustomer(invoices).map((group) => ({
+    key: group.key,
+    customerId: group.customerId,
+    customerName: group.customerName,
+    customerPhone: group.customerPhone,
+    invoiceIds: group.invoices.map((invoice) => invoice.invoiceId),
+    total: group.total,
+    maxDaysOverdue: group.maxDaysOverdue,
+    fullMessageDraft: draftCombinedWhatsAppMessage(group.invoices),
+  }));
+  return {
+    asOf: new Date().toISOString().slice(0, 10),
+    invoices,
+    customers,
+    // Lets the screen rebuild a combined message for any ticked subset.
+    reminderText: REMINDER_TEXT,
+  };
 }

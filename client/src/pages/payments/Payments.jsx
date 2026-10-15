@@ -36,6 +36,12 @@ function parseCaption(raw) {
   return { customerName: text, siteNote: '' };
 }
 
+function invoiceLabel(payment) {
+  const paid = (payment.allocations || []).filter((row) => row.applied > 0);
+  if (paid.length > 1) return `${paid[0].invoiceNo} +${paid.length - 1}`;
+  return payment.invoice?.invoiceNo || '—';
+}
+
 function rowLabel(payment) {
   return payment.confirmed?.customerName
     || payment.invoice?.customer?.name
@@ -326,7 +332,7 @@ export default function Payments() {
                       ? <span className="payment-pulse-text">…</span>
                       : formatRupiah(payment.amountReceived ?? payment.ai?.amount)}
                   </td>
-                  <td>{payment.invoice?.invoiceNo || '—'}</td>
+                  <td>{invoiceLabel(payment)}</td>
                   <td><StatusBadge status={payment.status} /></td>
                 </tr>
               ))}
@@ -357,7 +363,7 @@ export default function Payments() {
                       </Link>
                     </td>
                     <td>{formatRupiah(payment.amountReceived ?? payment.ai?.amount)}</td>
-                    <td>{payment.invoice?.invoiceNo || '—'}</td>
+                    <td>{invoiceLabel(payment)}</td>
                     <td><StatusBadge status={payment.status} /></td>
                   </tr>
                 ))}

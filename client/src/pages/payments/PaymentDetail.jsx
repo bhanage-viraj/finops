@@ -39,12 +39,9 @@ function formatDay(iso) {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '—';
 }
 
-function fitLabel(candidate) {
-  if (candidate.fit === 'exact') return 'Exact';
-  if (candidate.fit === 'fee') return `Exact + fee ${formatRupiah(candidate.bankFee)}`;
-  if (candidate.fit === 'partial') return 'Partial';
-  if (candidate.fit === 'over') return 'Over';
-  return '';
+function oldestFirst(a, b) {
+  const byDay = String(a.date || a.dueDate || '').localeCompare(String(b.date || b.dueDate || ''));
+  return byDay || String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
 }
 
 function ReadSteps({ status, hasMatch, hasAmount }) {
@@ -93,6 +90,9 @@ export default function PaymentDetail() {
   const suggestSeq = useRef(0);
   const startedAt = useRef(Date.now());
   const [elapsed, setElapsed] = useState(0);
+  const [customerInvoices, setCustomerInvoices] = useState([]);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
+  const [ticked, setTicked] = useState(() => new Set());
 
   async function load({ withFile = true } = {}) {
     const body = await fetchPayment(id);
@@ -186,6 +186,57 @@ export default function PaymentDetail() {
     return () => clearTimeout(timer);
   }, [query, canReview, payment?.status, payment?.matchedInvoiceId]);
 
+  const matchedCustomerId = payment?.matchedCustomerId || '';
+  const matchedCustomerName = payment?.invoice?.customer?.name || '';
+  const allocationKey = (payment?.allocations || []).map((row) => row.invoiceId).join(',');
+
+  // All unpaid invoices of the matched customer, oldest first, for the tick list.
+  useEffect(() => {
+    if (!canReview || !matchedCustomerId || !matchedCustomerName) {
+      setCustomerInvoices([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoadingInvoices(true);
+    fetchOpenInvoices(matchedCustomerName)
+      .then((body) => {
+        if (cancelled) return;
+        const rows = (body.invoices || [])
+          .filter((row) => String(row.erpCustomerId) === String(matchedCustomerId))
+          .sort(oldestFirst);
+        setCustomerInvoices(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setCustomerInvoices([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingInvoices(false);
+      });
+    return () => { cancelled = true; };
+  }, [canReview, matchedCustomerId, matchedCustomerName, payment?.status === 'approved']);
+
+  // Ticks follow the saved split whenever it changes on the server.
+  useEffect(() => {
+    setTicked(new Set(allocationKey ? allocationKey.split(',') : []));
+  }, [allocationKey]);
+
+  function toggleTick(invoiceId) {
+    setTicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(invoiceId)) next.delete(invoiceId);
+      else next.add(invoiceId);
+      return next;
+    });
+  }
+
+  async function applyTicked() {
+    if (!ticked.size) return;
+    await run(async () => {
+      await matchPayment(id, { invoiceIds: [...ticked] });
+      setMessage(ticked.size > 1 ? `${ticked.size} invoices linked to this transfer.` : 'Invoice changed.');
+    });
+  }
+
   async function run(action) {
     setBusy(true);
     setError('');
@@ -208,13 +259,6 @@ export default function PaymentDetail() {
       await updatePaymentHints(id, { customerName: row.customerName || '' });
       await matchPayment(id, { invoiceId: row.id });
       setMessage('Customer matched.');
-    });
-  }
-
-  async function switchInvoice(invoiceId) {
-    await run(async () => {
-      await matchPayment(id, { invoiceId });
-      setMessage('Invoice changed.');
     });
   }
 
@@ -253,10 +297,14 @@ export default function PaymentDetail() {
   const amount = payment.amountReceived ?? payment.ai?.amount;
   const hasAmount = amount != null;
   const adminFee = payment.ai?.adminFee || payment.bankFee || 0;
-  const shortBy = invoice && hasAmount && invoice.remaining > amount ? invoice.remaining - amount : 0;
-  const sameCustomer = (payment.candidates || []).filter(
-    (c) => invoice && c.customerId === payment.matchedCustomerId,
-  );
+  const allocations = payment.allocations || [];
+  const appliedById = new Map(allocations.map((row) => [String(row.invoiceId), row.applied]));
+  const shortBy = allocations.reduce((total, row) => total + Math.max(0, row.remaining - row.applied), 0);
+  const tickedRows = customerInvoices.filter((row) => ticked.has(String(row.id)));
+  const tickedTotal = tickedRows.reduce((total, row) => total + row.remaining, 0);
+  const currentIds = allocations.map((row) => String(row.invoiceId)).sort().join(',');
+  const tickedIds = [...ticked].sort().join(',');
+  const tickChanged = ticked.size > 0 && tickedIds !== currentIds;
   const matchNote = (payment.matchReasons || [])[0] || '';
 
   return (
@@ -363,57 +411,120 @@ export default function PaymentDetail() {
                 <dd>{payment.ai.reference}</dd>
               </div>
             )}
+            {payment.ai?.note && (
+              <div>
+                <dt>Remark</dt>
+                <dd>{payment.ai.note}</dd>
+              </div>
+            )}
           </dl>
         </section>
 
         <section className="card">
           {invoice && (
             <dl className="field-list">
-              <div><dt>Invoice</dt><dd>{invoice.invoiceNo}</dd></div>
               <div><dt>Customer</dt><dd>{invoice.customer?.name || '—'}</dd></div>
-              <div><dt>Due</dt><dd>{formatRupiah(invoice.remaining)}</dd></div>
+              <div>
+                <dt>Paying</dt>
+                <dd>
+                  {allocations.length > 1 ? `${allocations.filter((row) => row.applied > 0).length} invoices` : invoice.invoiceNo}
+                  {payment.amountApplied != null ? ` · ${formatRupiah(payment.amountApplied)}` : ''}
+                </dd>
+              </div>
               <div><dt>Zoho mode</dt><dd>Bank Transfer</dd></div>
             </dl>
           )}
 
           {invoice && matchNote && <p className="hint payment-match-note">{matchNote}</p>}
-          {invoice && shortBy > 0 && (
+          {invoice && hasAmount && shortBy > 0 && (
             <p className="message message-warn">
-              {formatRupiah(shortBy)} short — Zoho will keep this invoice partly unpaid.
+              {formatRupiah(shortBy)} still unpaid on the ticked invoices — Zoho keeps that part open.
             </p>
           )}
           {invoice && payment.amountExcess > 0 && (
             <p className="message message-warn">
-              {formatRupiah(payment.amountExcess)} more than the invoice — Zoho keeps it as customer credit.
+              {formatRupiah(payment.amountExcess)} more than the ticked invoices — Zoho keeps it as customer credit.
             </p>
           )}
 
-          {canFindCustomer && sameCustomer.length > 1 && (
+          {invoice && (customerInvoices.length > 0 || allocations.length > 0) && (
             <div className="payment-invoice-pick">
-              <p className="field-label">Unpaid invoices for {invoice.customer?.name}</p>
-              <ul className="name-suggest-list">
-                {sameCustomer.map((c) => {
-                  const current = String(c.invoiceId) === String(payment.matchedInvoiceId);
-                  return (
-                    <li key={c.invoiceId}>
-                      <button
-                        type="button"
-                        className={current ? 'is-current' : undefined}
-                        disabled={busy || current}
-                        aria-pressed={current}
-                        onClick={() => switchInvoice(c.invoiceId)}
-                      >
-                        <strong>
-                          {current ? '✓ ' : ''}{c.invoiceNo} · {formatDay(c.date)}
-                        </strong>
-                        <span className="hint">
-                          {formatRupiah(c.remaining)}{fitLabel(c) ? ` · ${fitLabel(c)}` : ''}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+              <div className="title-row">
+                <p className="field-label">Tick the invoices this transfer pays</p>
+                {canFindCustomer && customerInvoices.length > 1 && (
+                  <div className="actions payment-tick-tools">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={busy}
+                      onClick={() => setTicked(new Set(customerInvoices.map((row) => String(row.id))))}
+                    >
+                      Select all
+                    </button>
+                    <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setTicked(new Set())}>
+                      Clear
+                    </button>
+                  </div>
+                )}
+              </div>
+              {loadingInvoices && <p className="hint">Loading this customer&apos;s unpaid invoices…</p>}
+              <div className="table-wrap">
+                <table className="payment-alloc-table">
+                  <thead>
+                    <tr>
+                      <th aria-label="Pay" />
+                      <th>Invoice</th>
+                      <th>Date</th>
+                      <th className="num">Balance</th>
+                      <th className="num">Paying</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(customerInvoices.length ? customerInvoices : allocations.map((row) => ({
+                      id: row.invoiceId, invoiceNo: row.invoiceNo, date: row.date, remaining: row.remaining,
+                    }))).map((row) => {
+                      const key = String(row.id);
+                      const applied = appliedById.get(key);
+                      return (
+                        <tr key={key} className={ticked.has(key) ? 'row-selected' : undefined}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              aria-label={`Pay ${row.invoiceNo}`}
+                              checked={ticked.has(key)}
+                              disabled={busy || !canFindCustomer}
+                              onChange={() => toggleTick(key)}
+                            />
+                          </td>
+                          <td>{row.invoiceNo}</td>
+                          <td>{formatDay(row.date)}</td>
+                          <td className="num">{formatRupiah(row.remaining)}</td>
+                          <td className="num">
+                            {applied == null || tickChanged ? '—' : (
+                              applied >= row.remaining ? formatRupiah(applied)
+                                : (applied > 0 ? `${formatRupiah(applied)} (part)` : 'Not reached')
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="hint">
+                Ticked {ticked.size} · {formatRupiah(tickedTotal)}
+                {hasAmount ? ` · received ${formatRupiah(amount)}` : ''}
+                {hasAmount && tickedTotal && tickedTotal !== amount
+                  ? (tickedTotal > amount
+                    ? ` · ${formatRupiah(tickedTotal - amount)} short, oldest paid first`
+                    : ` · ${formatRupiah(amount - tickedTotal)} extra stays as credit`)
+                  : ''}
+              </p>
+              {canFindCustomer && tickChanged && (
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={applyTicked}>
+                  {busy ? 'Saving…' : `Use ${ticked.size} ticked invoice${ticked.size === 1 ? '' : 's'}`}
+                </button>
+              )}
             </div>
           )}
 

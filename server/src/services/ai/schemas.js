@@ -124,6 +124,7 @@ export const paymentExtractionSchema = {
     amount: STRING_OR_NULL,
     adminFee: STRING_OR_NULL,
     total: STRING_OR_NULL,
+    note: STRING_OR_NULL,
     paidAt: STRING_OR_NULL,
     reference: STRING_OR_NULL,
     transferMethod: STRING_OR_NULL,
@@ -132,22 +133,47 @@ export const paymentExtractionSchema = {
   required: ['sender', 'amount', 'paidAt', 'reference', 'confidence'],
 };
 
+const MONTHS = {
+  jan: 0, january: 0, januari: 0,
+  feb: 1, february: 1, februari: 1,
+  mar: 2, march: 2, maret: 2,
+  apr: 3, april: 3,
+  may: 4, mei: 4,
+  jun: 5, june: 5, juni: 5,
+  jul: 6, july: 6, juli: 6,
+  aug: 7, agu: 7, agt: 7, august: 7, agustus: 7,
+  sep: 8, sept: 8, september: 8,
+  oct: 9, okt: 9, october: 9, oktober: 9,
+  nov: 10, november: 10, nop: 10, nopember: 10,
+  dec: 11, des: 11, december: 11, desember: 11,
+};
+
+/** English or Indonesian month name / abbreviation → 0..11, else null. */
+export function monthIndex(name) {
+  const key = String(name || '').toLowerCase().replace(/\.$/, '');
+  return Object.prototype.hasOwnProperty.call(MONTHS, key) ? MONTHS[key] : null;
+}
+
 function parsePaymentDate(raw) {
   if (raw == null || String(raw).trim() === '') return null;
   const text = String(raw).trim();
-  const months = {
-    january: 0, februari: 1, february: 1, march: 2, maret: 2, april: 3,
-    mei: 4, may: 4, juni: 5, june: 5, juli: 6, july: 6, agustus: 7, august: 7,
-    september: 8, oktober: 9, october: 9, november: 10, desember: 11, december: 11,
-  };
   // Prefer an explicit day-month-year parse so local timezone does not shift the day.
-  const m = text.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})(?:,?\s*(\d{1,2}):(\d{2}))?/);
+  const m = text.match(/^(\d{1,2})\s+([A-Za-z]+)\.?\s+(\d{4})(?:,?\s*(\d{1,2})[:.](\d{2}))?/);
   if (m) {
-    const month = months[m[2].toLowerCase()];
+    const month = monthIndex(m[2]);
     if (month == null) return null;
     const hour = m[4] != null ? Number(m[4]) : 0;
     const minute = m[5] != null ? Number(m[5]) : 0;
     return new Date(Date.UTC(Number(m[3]), month, Number(m[1]), hour, minute, 0));
+  }
+  // Mandiri style: "Oct 01, 2026 22:04:43 (GMT +7)".
+  const us = text.match(/^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})(?:,?\s*(\d{1,2})[:.](\d{2}))?/);
+  if (us) {
+    const month = monthIndex(us[1]);
+    if (month == null) return null;
+    const hour = us[4] != null ? Number(us[4]) : 0;
+    const minute = us[5] != null ? Number(us[5]) : 0;
+    return new Date(Date.UTC(Number(us[3]), month, Number(us[2]), hour, minute, 0));
   }
   if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
     const iso = Date.parse(text);
@@ -161,19 +187,11 @@ function parsePaymentAmount(raw) {
   let text = String(raw).trim()
     .replace(/rp\.?|idr|rupiah/gi, '')
     .replace(/\s/g, '');
-  if (text.includes(',') && text.includes('.')) {
-    // Rp28.000,00 → drop decimal part after comma
-    text = text.split(',')[0].replace(/\./g, '');
-  } else if (text.includes(',')) {
-    const parts = text.split(',');
-    text = parts.slice(1).every((p) => /^\d{3}$/.test(p))
-      ? parts.join('')
-      : parts[0].replace(/\./g, '');
-  } else if (text.includes('.')) {
-    const parts = text.split('.');
-    text = parts.slice(1).every((p) => /^\d{3}$/.test(p))
-      ? parts.join('')
-      : parts[0];
+  // Rp28.000,00 (Indonesian) and IDR 9,438,800.00 (English bank apps) both occur.
+  // The last separator followed by 1–2 digits is the decimal point; the rest are thousands.
+  const last = Math.max(text.lastIndexOf(','), text.lastIndexOf('.'));
+  if (last >= 0 && /^\d{1,2}$/.test(text.slice(last + 1))) {
+    text = text.slice(0, last);
   }
   text = text.replace(/[^\d]/g, '');
   if (!/^\d+$/.test(text)) return null;
@@ -204,6 +222,7 @@ export function assertPaymentExtraction(value) {
     amount,
     adminFee,
     total,
+    note: value.note == null || value.note === '' ? null : String(value.note).slice(0, 200),
     paidAt,
     reference: value.reference == null || value.reference === '' ? null : String(value.reference).slice(0, 120),
     transferMethod: value.transferMethod == null || value.transferMethod === ''

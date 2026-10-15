@@ -410,6 +410,14 @@ a.btn {
 .payment-match-note { margin: var(--space-3) 0 0; }
 .payment-invoice-pick { margin-top: var(--space-3); }
 .payment-invoice-pick .name-suggest-list { max-height: 320px; }
+.payment-invoice-pick .title-row { justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
+.payment-invoice-pick .field-label { margin: 0; }
+.payment-tick-tools { margin: 0; }
+.payment-tick-tools .btn { min-height: 32px; padding: 0 var(--space-3); }
+.payment-alloc-table td:first-child,
+.payment-alloc-table th:first-child { width: 36px; }
+.payment-alloc-table input[type="checkbox"] { width: 20px; height: 20px; }
+.payment-invoice-pick > .btn { margin-top: var(--space-2); }
 .name-suggest-list button.is-current {
   background: var(--ok-bg);
   color: var(--ok-ink);
@@ -558,6 +566,37 @@ label.btn.is-disabled {
   min-height: 220px;
   height: 280px;
 }
+.followup-head { gap: var(--space-2); flex-wrap: wrap; }
+.followup-view-toggle { margin: 0; }
+.followup-pick-cell { width: 36px; }
+.followup-pick-cell input[type="checkbox"] { width: 18px; height: 18px; }
+.followup-customer-row td { color: var(--ink); background: var(--neutral-bg); }
+.followup-customer-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.followup-customer-name { display: block; font-size: var(--text-section); }
+.followup-customer-meta { color: var(--muted); }
+.followup-customer-actions { margin: 0; }
+.followup-full-btn { font-weight: 600; }
+.followup-combined-list {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.followup-combined-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+.followup-combined-list li + li { border-top: 1px solid var(--border); }
 .viewer-scroll { overflow: auto; max-height: 75vh; background: var(--bg); }
 .viewer-stage { position: relative; }
 .viewer-stage img, .viewer-stage iframe { display: block; width: 100%; min-height: 420px; border: 0; background: white; }
@@ -605,7 +644,11 @@ label.btn.is-disabled {
   .followup-preview-frame { max-height: 220px; }
   .followup-preview-frame iframe { min-height: 180px; height: 220px; }
   .followup-preview-head .btn,
-  .followup-panel-head .btn { width: auto; }
+  .followup-panel-head .btn,
+  .followup-combined-list .btn { width: auto; }
+  .actions.followup-view-toggle { flex-direction: row; }
+  .followup-view-toggle .btn { width: auto; flex: 1; }
+  .followup-customer-head > * { width: 100%; }
   .capture-card {
     position: fixed;
     left: 0;

@@ -6,10 +6,11 @@ Return JSON only that matches the schema. Do not invent values you cannot see.
 Extract:
 - sender: Sumber Dana / From / pengirim — the person or company who sent the money. Not the recipient (Tujuan).
 - recipient: Tujuan / penerima (often the company account), if shown.
-- amount: the transfer Nominal only, as an integer string of rupiah with no currency symbol and no thousand separators. Example: Rp480.000 → "480000". Not Total Transaksi, not Biaya Admin.
+- amount: the transfer Nominal only, as an integer string of rupiah with no currency symbol and no thousand separators. Examples: Rp480.000 → "480000"; IDR 9,438,800.00 → "9438800". Not Total Transaksi, not Biaya Admin.
 - adminFee: Biaya Admin / admin fee as an integer string, or null if not shown. Example: Rp2.500 → "2500".
 - total: Total Transaksi (Nominal plus admin fee) as an integer string, or null if not shown. Example: Rp482.500 → "482500".
-- paidAt: transaction date and time as ISO-8601 UTC if possible, or local ISO without timezone (YYYY-MM-DDTHH:mm:ss). Parse day-month-year Indonesian/English dates such as "30 September 2026, 07:36".
+- note: the transfer remark written by the sender (Catatan / Berita / Keterangan / Payment Detail / Extended Payment Detail / Remark), copied as written, or null. Example: "Jaan Mineral Water - Sept 28-30". If there are two remark lines, prefer the longer one.
+- paidAt: transaction date and time as ISO-8601 UTC if possible, or local ISO without timezone (YYYY-MM-DDTHH:mm:ss). Parse dates such as "30 September 2026, 07:36" or "Oct 01, 2026 22:04:43 (GMT +7)" and keep the local clock time shown.
 - reference: No. Ref / reference / transaction number if shown.
 - transferMethod: e.g. BI-FAST, RTOL, Transfer, if shown.
 - confidence: 0-100 for how readable the screenshot is overall.

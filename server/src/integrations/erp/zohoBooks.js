@@ -227,6 +227,7 @@ export function mapOverdueInvoice(row, today = new Date()) {
   return {
     invoiceId,
     invoiceNumber: String(row.invoice_number || '').slice(0, 80),
+    customerId: customerIdFrom(row.customer_id),
     customerName: String(row.customer_name || '').slice(0, 120),
     customerPhone: phone.slice(0, 20),
     dueDate,
@@ -344,20 +345,34 @@ export async function createCustomerPayment({
   if (!Number.isInteger(payment.amount) || payment.amount <= 0) {
     throw zohoFailure('The payment amount must be a whole number of rupiah.');
   }
-  if (!Number.isInteger(payment.amountApplied) || payment.amountApplied <= 0) {
+  // One payment may settle several invoices of the same customer.
+  const lines = Array.isArray(payment.invoices)
+    ? payment.invoices
+    : [{ invoiceId: payment.invoiceId, amountApplied: payment.amountApplied }];
+  if (!lines.length || lines.length > 50) {
+    throw zohoFailure('A customer payment must cover between 1 and 50 invoices.');
+  }
+  const invoiceLines = lines.map((line) => ({
+    invoice_id: invoiceIdFrom(line.invoiceId),
+    amount_applied: line.amountApplied,
+  }));
+  if (invoiceLines.some((line) => !line.invoice_id)) throw zohoFailure('The Zoho invoice id must be numeric.');
+  if (new Set(invoiceLines.map((line) => line.invoice_id)).size !== invoiceLines.length) {
+    throw zohoFailure('The same invoice appears twice in one payment.');
+  }
+  if (invoiceLines.some((line) => !Number.isInteger(line.amount_applied) || line.amount_applied <= 0)) {
     throw zohoFailure('The amount applied to the invoice must be a whole number of rupiah.');
   }
-  if (payment.amountApplied > payment.amount) {
+  const appliedTotal = invoiceLines.reduce((total, line) => total + line.amount_applied, 0);
+  if (appliedTotal > payment.amount) {
     throw zohoFailure('Amount applied cannot exceed the payment amount.');
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(payment.date || '')) {
     throw zohoFailure('The payment date must be an ISO date.');
   }
   const customerId = customerIdFrom(payment.customerId);
-  const invoiceId = invoiceIdFrom(payment.invoiceId);
   const accountId = String(payment.accountId || '');
   if (!customerId) throw zohoFailure('The Zoho customer id must be numeric.');
-  if (!invoiceId) throw zohoFailure('The Zoho invoice id must be numeric.');
   if (!/^\d+$/.test(accountId)) {
     throw zohoFailure('Set ZOHO_PAYMENT_DEPOSIT_ACCOUNT_ID to the Zoho bank account that receives transfers.');
   }
@@ -372,10 +387,7 @@ export async function createCustomerPayment({
     reference_number: String(payment.referenceNumber || '').slice(0, 100),
     description: String(payment.description || '').slice(0, 200),
     account_id: accountId,
-    invoices: [{
-      invoice_id: invoiceId,
-      amount_applied: payment.amountApplied,
-    }],
+    invoices: invoiceLines,
   };
   const url = `${hosts.api}/books/v3/customerpayments?organization_id=${organizationId}`;
   assertAllowedUrl(url, zoho.dc, 'POST');
@@ -478,6 +490,9 @@ export async function listOverdueInvoices({ zoho, refreshToken, fetchImpl = fetc
         const idMatch = text.match(new RegExp(`"invoice_id"\\s*:\\s*"?(${String(row.invoice_id)})"?`));
         if (idMatch) row.invoice_id = idMatch[1];
         else row.invoice_id = String(row.invoice_id);
+      }
+      if (row && row.customer_id != null && typeof row.customer_id !== 'string') {
+        row.customer_id = String(row.customer_id);
       }
       const mapped = mapOverdueInvoice(row, today);
       if (mapped) invoices.push(mapped);

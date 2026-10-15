@@ -22,6 +22,7 @@ const bankPaymentSchema = new Schema({
     amount: integerRupiahField(),
     adminFee: integerRupiahField(),
     total: integerRupiahField(),
+    note: { type: String, default: null },
     paidAt: { type: Date, default: null },
     reference: { type: String, default: null },
     recipient: { type: String, default: null },
@@ -60,6 +61,18 @@ const bankPaymentSchema = new Schema({
     type: String,
     enum: ['high', 'medium', 'low'],
     default: undefined,
+  },
+  // One transfer can settle several invoices of the same customer. zohoInvoiceId is the first.
+  allocations: {
+    type: [new Schema({
+      invoiceId: { type: String, required: true },
+      invoiceNumber: { type: String, default: '' },
+      remaining: integerRupiahField(),
+      applied: integerRupiahField(),
+      date: { type: String, default: '' },
+      dueDate: { type: String, default: '' },
+    }, { _id: false })],
+    default: [],
   },
   // Rupiah above the invoice treated as the sender's bank fee; not recorded in Zoho.
   bankFee: { ...integerRupiahField(), default: 0 },
