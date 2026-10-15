@@ -9,10 +9,15 @@ import { httpError } from '../../utils/http.js';
 
 function present(settings, env) {
   const refreshToken = env.zoho?.refreshToken || settings?.zohoRefreshToken || '';
+  // Connect only needs OAuth app settings. Org id is for API calls after connect.
+  const zohoConnectMissing = missingZohoConfig(env.zoho || {}, { purpose: 'connect' });
+  const zohoMissing = missingZohoConfig(env.zoho || {}, { refreshToken })
+    .filter((key) => key !== 'ZOHO_REFRESH_TOKEN');
   return {
     erpFeaturesEnabled: settings?.erpFeaturesEnabled === true,
     zohoConnected: Boolean(refreshToken),
-    zohoMissing: missingZohoConfig(env.zoho || {}, { refreshToken }).filter((key) => key !== 'ZOHO_REFRESH_TOKEN'),
+    zohoConnectMissing,
+    zohoMissing,
     zohoAccountRules: (settings?.zohoAccountRules || []).map((rule) => ({
       kind: rule.kind,
       documentType: rule.documentType || '',

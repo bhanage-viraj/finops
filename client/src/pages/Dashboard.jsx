@@ -1,21 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { clearAllDocuments, fetchSettings, setExpenseExport, startZohoConnect } from '../api/admin.js';
-import { fetchStats } from '../api/documents.js';
+import { fetchSettings, setExpenseExport, startZohoConnect } from '../api/admin.js';
 import { useAuth } from '../auth/AuthContext.jsx';
-import UploadDropzone from '../components/UploadDropzone.jsx';
 
-const CARDS = [
-  ['total', 'Documents', '/documents'],
-  ['awaiting', 'Awaiting', '/documents?status=uploaded'],
-  ['processing', 'Processing', '/documents?status=processing'],
-  ['review', 'Needs review', '/documents?needsReview=1'],
-  ['approved', 'Approved', '/documents?status=approved'],
-  ['failed', 'Failed', '/documents?status=failed'],
-];
-
-const WORKFLOWS = [
-  ['/documents', 'Documents', 'Review and approve expense receipts'],
+const FEATURES = [
+  ['/documents', 'Documents', 'Scan and approve expense receipts'],
   ['/payments', 'Payments', 'Match bank transfer screenshots'],
   ['/follow-up', 'Follow-up', 'Remind overdue customers'],
 ];
@@ -26,12 +15,10 @@ function ZohoConnect() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  function load() {
-    return fetchSettings().then(setSettings).catch((err) => setError(err.message));
-  }
-
   useEffect(() => {
-    load();
+    fetchSettings()
+      .then(setSettings)
+      .catch((err) => setError(err.message));
   }, []);
 
   async function connect() {
@@ -57,8 +44,8 @@ function ZohoConnect() {
       const next = await setExpenseExport(!settings.erpFeaturesEnabled);
       setSettings(next);
       setMessage(next.erpFeaturesEnabled
-        ? 'Expense export is on. An approved receipt can be sent to Zoho Books.'
-        : 'Expense export is off. Nothing will be sent to Zoho Books.');
+        ? 'Zoho features are on (expenses, payments, follow-up).'
+        : 'Zoho features are off.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -66,56 +53,61 @@ function ZohoConnect() {
     }
   }
 
-  async function clearReceipts() {
-    if (!window.confirm('Delete every receipt and its photo? This cannot be undone.')) return;
-    setBusy(true);
-    setError('');
-    setMessage('');
-    try {
-      const result = await clearAllDocuments();
-      setMessage(`${result.documentsDeleted} receipt${result.documentsDeleted === 1 ? '' : 's'} deleted.`);
-      window.location.reload();
-    } catch (err) {
-      setError(err.message);
-      setBusy(false);
-    }
-  }
-
-  const missing = settings?.zohoMissing || [];
+  const connectMissing = settings?.zohoConnectMissing || [];
+  const workMissing = settings?.zohoMissing || [];
   const connected = settings?.zohoConnected === true;
   const exportOn = settings?.erpFeaturesEnabled === true;
+  const canConnect = connectMissing.length === 0;
 
   return (
     <section className="card">
       <h2>Zoho Books</h2>
       <p className="hint">
-        Connect once (expense create and overdue invoice read), then turn export on.
-        After a scope change, choose Connect Zoho again. Approving a receipt still does not send it.
+        Connect Zoho once, then turn features on. Approving a receipt still does not send it until you choose Send.
       </p>
+
+      {!settings && !error && <p className="hint">Checking Zoho…</p>}
+
       {settings && (
         <>
           <p className={connected ? 'message message-ok' : 'message message-warn'}>
-            {connected ? 'Zoho is connected.' : 'Zoho is not connected yet.'}
+            {connected ? 'Connected.' : 'Not connected yet.'}
           </p>
           <p className={exportOn ? 'message message-ok' : 'message message-warn'}>
-            {exportOn ? 'Expense export is on.' : 'Expense export is off.'}
+            {exportOn ? 'Features on.' : 'Features off.'}
           </p>
-          {missing.length > 0 && (
-            <p className="message message-bad">Still needed on the live server: {missing.join(', ')}</p>
+          {!canConnect && (
+            <p className="message message-bad">
+              Set on the server before Connect: {connectMissing.join(', ')}
+            </p>
+          )}
+          {canConnect && workMissing.length > 0 && (
+            <p className="message message-warn">
+              Also set for full Zoho use: {workMissing.join(', ')}
+            </p>
           )}
         </>
       )}
+
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
+
       <div className="actions">
-        <button type="button" className="btn btn-primary" disabled={busy || missing.length > 0} onClick={connect}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy || !settings || !canConnect}
+          onClick={connect}
+        >
           {connected ? 'Connect Zoho again' : 'Connect Zoho'}
         </button>
-        <button type="button" className="btn btn-secondary" disabled={busy || !settings} onClick={toggleExport}>
-          {exportOn ? 'Turn expense export off' : 'Turn expense export on'}
-        </button>
-        <button type="button" className="btn btn-secondary" disabled={busy} onClick={clearReceipts}>
-          Clear all receipts
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={busy || !settings || !connected}
+          onClick={toggleExport}
+        >
+          {exportOn ? 'Turn features off' : 'Turn features on'}
         </button>
       </div>
     </section>
@@ -124,13 +116,7 @@ function ZohoConnect() {
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const [stats, setStats] = useState(null);
-  const [error, setError] = useState('');
   const admin = user?.role === 'admin';
-
-  useEffect(() => {
-    fetchStats().then(setStats).catch((err) => setError(err.message));
-  }, []);
 
   return (
     <>
@@ -138,29 +124,11 @@ export default function Dashboard() {
         <h1>Overview</h1>
       </div>
 
-      <UploadDropzone
-        title="Scan expense receipt"
-        hint="Photograph a fuel slip, supplier receipt, or work order. Bank transfers go to Payments."
-      />
-
-      {error && <p className="message message-bad">{error}</p>}
-
-      <h2 className="section-title">Receipt status</h2>
-      <div className="stat-grid">
-        {CARDS.map(([key, label, to]) => (
-          <Link key={key} to={to} className="card stat-card">
-            <p className="eyebrow">{label}</p>
-            <p className="stat-number">{stats ? stats[key] : '—'}</p>
-          </Link>
-        ))}
-      </div>
-
-      <h2 className="section-title">Go to</h2>
-      <div className="workflow-grid">
-        {WORKFLOWS.map(([to, label, text]) => (
-          <Link key={to} to={to} className="card workflow-card">
-            <strong>{label}</strong>
-            <p className="hint">{text}</p>
+      <div className="overview-actions">
+        {FEATURES.map(([to, label, text]) => (
+          <Link key={to} to={to} className="btn btn-primary overview-feature-btn">
+            <span>{label}</span>
+            <span className="overview-feature-hint">{text}</span>
           </Link>
         ))}
       </div>
