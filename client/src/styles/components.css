@@ -417,6 +417,7 @@ a.btn {
 .payment-alloc-table td:first-child,
 .payment-alloc-table th:first-child { width: 36px; }
 .payment-alloc-table input[type="checkbox"] { width: 20px; height: 20px; }
+.payment-alloc-table input[type="checkbox"]:disabled { opacity: 0.4; cursor: not-allowed; }
 .payment-invoice-pick > .btn { margin-top: var(--space-2); }
 .name-suggest-list button.is-current {
   background: var(--ok-bg);

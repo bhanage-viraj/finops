@@ -189,10 +189,11 @@ export default function PaymentDetail() {
   const matchedCustomerId = payment?.matchedCustomerId || '';
   const matchedCustomerName = payment?.invoice?.customer?.name || '';
   const allocationKey = (payment?.allocations || []).map((row) => row.invoiceId).join(',');
+  const closed = ['approved', 'rejected'].includes(payment?.status);
 
   // All unpaid invoices of the matched customer, oldest first, for the tick list.
   useEffect(() => {
-    if (!canReview || !matchedCustomerId || !matchedCustomerName) {
+    if (!canReview || closed || !matchedCustomerId || !matchedCustomerName) {
       setCustomerInvoices([]);
       return undefined;
     }
@@ -213,7 +214,7 @@ export default function PaymentDetail() {
         if (!cancelled) setLoadingInvoices(false);
       });
     return () => { cancelled = true; };
-  }, [canReview, matchedCustomerId, matchedCustomerName, payment?.status === 'approved']);
+  }, [canReview, closed, matchedCustomerId, matchedCustomerName]);
 
   // Ticks follow the saved split whenever it changes on the server.
   useEffect(() => {
@@ -306,6 +307,16 @@ export default function PaymentDetail() {
   const tickedIds = [...ticked].sort().join(',');
   const tickChanged = ticked.size > 0 && tickedIds !== currentIds;
   const matchNote = (payment.matchReasons || [])[0] || '';
+  // Older payments were saved before splits existed: show the single matched invoice.
+  const recordedRows = allocations.some((row) => row.applied > 0)
+    ? allocations.filter((row) => row.applied > 0)
+    : (invoice && payment.amountApplied != null ? [{
+      invoiceId: invoice.id,
+      invoiceNo: invoice.invoiceNo,
+      date: null,
+      remaining: invoice.remaining,
+      applied: payment.amountApplied,
+    }] : []);
 
   return (
     <>
@@ -447,7 +458,40 @@ export default function PaymentDetail() {
             </p>
           )}
 
-          {invoice && (customerInvoices.length > 0 || allocations.length > 0) && (
+          {invoice && closed && recordedRows.length > 0 && (
+            <div className="payment-invoice-pick">
+              <p className="field-label">
+                {payment.status === 'approved' ? 'Recorded in Zoho' : 'Invoices on this payment'}
+              </p>
+              <div className="table-wrap">
+                <table className="payment-alloc-table payment-recorded-table">
+                  <thead>
+                    <tr>
+                      <th>Invoice</th>
+                      <th>Date</th>
+                      <th className="num">Balance then</th>
+                      <th className="num">Paid</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recordedRows.map((row) => (
+                      <tr key={String(row.invoiceId)}>
+                        <td>{row.invoiceNo || '—'}</td>
+                        <td>{row.date ? formatDay(row.date) : '—'}</td>
+                        <td className="num">{formatRupiah(row.remaining)}</td>
+                        <td className="num">
+                          {formatRupiah(row.applied)}
+                          {row.remaining != null && row.applied < row.remaining ? ' (part)' : ''}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {invoice && !closed && (customerInvoices.length > 0 || allocations.length > 0) && (
             <div className="payment-invoice-pick">
               <div className="title-row">
                 <p className="field-label">Tick the invoices this transfer pays</p>
