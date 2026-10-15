@@ -76,8 +76,14 @@ export default function DocumentQueue() {
           <option value="failed">Failed</option>
           <option value="rejected">Rejected</option>
         </select>
-        <input aria-label="From date" type="date" value={filters.from} onChange={(event) => setFilter('from', event.target.value)} />
-        <input aria-label="To date" type="date" value={filters.to} onChange={(event) => setFilter('to', event.target.value)} />
+        <label className="filter-field">
+          <span className="field-label">Date from</span>
+          <input type="date" value={filters.from} onChange={(event) => setFilter('from', event.target.value)} />
+        </label>
+        <label className="filter-field">
+          <span className="field-label">Date to</span>
+          <input type="date" value={filters.to} onChange={(event) => setFilter('to', event.target.value)} />
+        </label>
         <input aria-label="Supplier or worker" placeholder="Supplier or worker" value={filters.q} onChange={(event) => setFilter('q', event.target.value)} />
       </div>
       {error && <p className="message message-bad">{error}</p>}

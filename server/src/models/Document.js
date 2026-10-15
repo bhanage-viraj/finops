@@ -67,6 +67,7 @@ documentSchema.index({ documentType: 1 });
 documentSchema.index({ uploadedBy: 1 });
 documentSchema.index({ sha256: 1 });
 documentSchema.index({ searchParty: 1, searchDate: 1, searchTotal: 1 });
+documentSchema.index({ searchDate: 1, createdAt: 1 });
 documentSchema.index(
   { uploadedBy: 1, idempotencyKey: 1 },
   { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } },

@@ -352,18 +352,22 @@ export default function FollowUp() {
               value={q}
               onChange={(event) => setQ(event.target.value)}
             />
-            <input
-              aria-label="Due from"
-              type="date"
-              value={dueFrom}
-              onChange={(event) => setDueFrom(event.target.value)}
-            />
-            <input
-              aria-label="Due to"
-              type="date"
-              value={dueTo}
-              onChange={(event) => setDueTo(event.target.value)}
-            />
+            <label className="filter-field">
+              <span className="field-label">Due from</span>
+              <input
+                type="date"
+                value={dueFrom}
+                onChange={(event) => setDueFrom(event.target.value)}
+              />
+            </label>
+            <label className="filter-field">
+              <span className="field-label">Due to</span>
+              <input
+                type="date"
+                value={dueTo}
+                onChange={(event) => setDueTo(event.target.value)}
+              />
+            </label>
             {(q || dueFrom || dueTo) && (
               <button
                 type="button"

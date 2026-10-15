@@ -196,7 +196,11 @@ export async function listDocuments(user, query) {
     const safe = String(query.q).slice(0, 80).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     filter.searchParty = new RegExp(safe, 'i');
   }
-  const docs = await Document.find(filter).sort({ createdAt: -1 }).limit(100);
+  // Date filter: oldest expense date first. Otherwise newest upload first.
+  const sort = (query.from || query.to)
+    ? { searchDate: 1, createdAt: 1 }
+    : { createdAt: -1 };
+  const docs = await Document.find(filter).sort(sort).limit(100);
   return docs.map((doc) => toDto(doc));
 }
 
