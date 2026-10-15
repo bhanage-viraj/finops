@@ -366,20 +366,6 @@ a.btn {
   min-height: 36px;
 }
 .row-selected td { background: var(--accent-soft); }
-.followup-card-actions { margin: var(--space-3) 0 0; }
-.followup-groups { display: grid; gap: var(--space-4); }
-.followup-group-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-2);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border);
-}
-.followup-group-head h3 { margin: 0; font-size: 1rem; }
-.followup-group-cards { display: grid; gap: var(--space-2); }
 .followup-due-cell { font-weight: 600; }
 .followup-group-row td {
   background: var(--bg);
@@ -457,7 +443,8 @@ a.btn {
     padding-bottom: calc(148px + env(safe-area-inset-bottom));
   }
   .stat-grid, .review-grid, .line-grid { grid-template-columns: 1fr; }
-  .followup-card-actions .btn { width: 100%; }
+  /* Follow-up keeps the table on phone (no separate card list). */
+  .table-wrap.followup-list { display: block; }
   .followup-preview-frame { max-height: 220px; }
   .followup-preview-frame iframe { min-height: 180px; height: 220px; }
   .followup-preview-head .btn,

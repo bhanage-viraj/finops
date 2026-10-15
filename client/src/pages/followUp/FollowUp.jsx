@@ -380,106 +380,65 @@ export default function FollowUp() {
           {filtered.length === 0 ? (
             <p className="muted">No invoices match these filters.</p>
           ) : (
-            <>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Customer</th>
-                      <th>Invoice</th>
-                      <th>Due</th>
-                      <th className="num">Days</th>
-                      <th className="num">Balance</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dueGroups.map((group) => (
-                      <Fragment key={group.dueDate}>
-                        <tr className="followup-group-row">
-                          <td colSpan={6}>
-                            <strong>Due {displayDate(group.dueDate)}</strong>
-                            {' · '}
-                            {group.daysOverdue}d overdue
-                            {' · '}
-                            {group.invoices.length} invoice{group.invoices.length === 1 ? '' : 's'}
-                          </td>
-                        </tr>
-                        {group.invoices.map((invoice) => {
-                          const open = invoice.invoiceId === selectedId;
-                          return (
-                            <Fragment key={invoice.invoiceId}>
-                              <tr className={open ? 'row-selected' : undefined}>
-                                <td>{invoice.customerName || '—'}</td>
-                                <td>{invoice.invoiceNumber || '—'}</td>
-                                <td className="followup-due-cell">{displayDate(invoice.dueDate)}</td>
-                                <td className="num">{invoice.daysOverdue}</td>
-                                <td className="num">{formatRupiah(invoice.balance)}</td>
-                                <td>
-                                  <button
-                                    type="button"
-                                    className="btn btn-secondary"
-                                    onClick={() => pick(invoice)}
-                                  >
-                                    {open ? 'Close' : 'Message'}
-                                  </button>
-                                </td>
-                              </tr>
-                              {open && (
-                                <tr className="followup-detail-row">
-                                  <td colSpan={6}>
-                                    <FollowUpPanel {...panelProps} selected={invoice} />
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          );
-                        })}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="doc-cards followup-groups">
-                {dueGroups.map((group) => (
-                  <div key={group.dueDate} className="followup-group">
-                    <div className="followup-group-head">
-                      <h3>Due {displayDate(group.dueDate)}</h3>
-                      <span className="badge badge-bad">{group.daysOverdue}d · {group.invoices.length}</span>
-                    </div>
-                    <div className="followup-group-cards">
+            <div className="table-wrap followup-list">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Customer</th>
+                    <th>Invoice</th>
+                    <th>Due</th>
+                    <th className="num">Days</th>
+                    <th className="num">Balance</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dueGroups.map((group) => (
+                    <Fragment key={group.dueDate}>
+                      <tr className="followup-group-row">
+                        <td colSpan={6}>
+                          <strong>Due {displayDate(group.dueDate)}</strong>
+                          {' · '}
+                          {group.daysOverdue}d overdue
+                          {' · '}
+                          {group.invoices.length} invoice{group.invoices.length === 1 ? '' : 's'}
+                        </td>
+                      </tr>
                       {group.invoices.map((invoice) => {
                         const open = invoice.invoiceId === selectedId;
                         return (
-                          <div
-                            key={invoice.invoiceId}
-                            className={`card doc-card${open ? ' row-selected' : ''}`}
-                          >
-                            <div className="title-row">
-                              <strong>{invoice.customerName || 'Customer'}</strong>
-                              <span className="badge badge-bad">{invoice.daysOverdue}d</span>
-                            </div>
-                            <p>{invoice.invoiceNumber || '—'} · due {displayDate(invoice.dueDate)}</p>
-                            <p className="subtext">{formatRupiah(invoice.balance)}</p>
-                            <div className="actions followup-card-actions">
-                              <button
-                                type="button"
-                                className="btn btn-primary"
-                                onClick={() => pick(invoice)}
-                              >
-                                {open ? 'Close' : 'Message'}
-                              </button>
-                            </div>
-                            {open && <FollowUpPanel {...panelProps} selected={invoice} />}
-                          </div>
+                          <Fragment key={invoice.invoiceId}>
+                            <tr className={open ? 'row-selected' : undefined}>
+                              <td>{invoice.customerName || '—'}</td>
+                              <td>{invoice.invoiceNumber || '—'}</td>
+                              <td className="followup-due-cell">{displayDate(invoice.dueDate)}</td>
+                              <td className="num">{invoice.daysOverdue}</td>
+                              <td className="num">{formatRupiah(invoice.balance)}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  onClick={() => pick(invoice)}
+                                >
+                                  {open ? 'Close' : 'Message'}
+                                </button>
+                              </td>
+                            </tr>
+                            {open && (
+                              <tr className="followup-detail-row">
+                                <td colSpan={6}>
+                                  <FollowUpPanel {...panelProps} selected={invoice} />
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
                         );
                       })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
       )}
