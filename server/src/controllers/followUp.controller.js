@@ -4,7 +4,17 @@ import { asyncHandler } from '../utils/http.js';
 
 export function today(env) {
   return asyncHandler(async (req, res) => {
-    res.json(await todayFollowUp(req.user, env));
+    const {
+      page, view, q, dueFrom, dueTo, refresh,
+    } = req.query;
+    res.json(await todayFollowUp(req.user, env, {
+      page: String(page || ''),
+      view: view === 'customer' ? 'customer' : 'due',
+      q: String(q || ''),
+      dueFrom: String(dueFrom || ''),
+      dueTo: String(dueTo || ''),
+      refresh: refresh === '1' ? '1' : '',
+    }));
   });
 }
 

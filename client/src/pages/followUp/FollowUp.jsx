@@ -2,20 +2,6 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchFollowUpInvoicePdf, fetchFollowUpToday } from '../../api/followUp.js';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 
-function matchesFollowUpFilters(invoice, { q, dueFrom, dueTo }) {
-  if (dueFrom && String(invoice.dueDate || '') < dueFrom) return false;
-  if (dueTo && String(invoice.dueDate || '') > dueTo) return false;
-  const needle = String(q || '').trim().toLowerCase();
-  if (!needle) return true;
-  const hay = [
-    invoice.customerName,
-    invoice.invoiceNumber,
-    invoice.invoiceId,
-    invoice.customerPhone,
-  ].join(' ').toLowerCase();
-  return hay.includes(needle);
-}
-
 function displayDate(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return iso || '—';
   const [y, m, d] = iso.split('-');
@@ -213,6 +199,35 @@ function CombinedPanel({
   );
 }
 
+function Pager({ info, busy, onPage }) {
+  if (!info || info.pageCount <= 1) return null;
+  const unit = info.unit === 'customers' ? 'customers' : 'invoices';
+  return (
+    <nav className="followup-pager" aria-label="Pages">
+      <button
+        type="button"
+        className="btn btn-secondary"
+        disabled={busy || info.page <= 1}
+        onClick={() => onPage(info.page - 1)}
+      >
+        ‹ Previous
+      </button>
+      <span className="hint">
+        {unit} {info.from.toLocaleString('id-ID')}–{info.to.toLocaleString('id-ID')} of {info.total.toLocaleString('id-ID')}
+        {' · page '}{info.page} of {info.pageCount}
+      </span>
+      <button
+        type="button"
+        className="btn btn-secondary"
+        disabled={busy || info.page >= info.pageCount}
+        onClick={() => onPage(info.page + 1)}
+      >
+        Next ›
+      </button>
+    </nav>
+  );
+}
+
 export default function FollowUp() {
   const [invoices, setInvoices] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -235,6 +250,12 @@ export default function FollowUp() {
   const [q, setQ] = useState('');
   const [dueFrom, setDueFrom] = useState('');
   const [dueTo, setDueTo] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageInfo, setPageInfo] = useState(null);
+  const [totals, setTotals] = useState(null);
+  const [reloadTick, setReloadTick] = useState(0);
+  const refreshNext = useRef(false);
   const pdfCache = useRef(new Map());
   const previewUrlRef = useRef('');
 
@@ -265,16 +286,43 @@ export default function FollowUp() {
     return files;
   }
 
+  // Search runs on the server across every overdue invoice, so wait for typing to pause.
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchText(q.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [view, searchText, dueFrom, dueTo]);
+
   useEffect(() => {
     let cancelled = false;
     setBusy(true);
-    fetchFollowUpToday()
+    setError('');
+    const request = fetchFollowUpToday({
+      view,
+      page,
+      q: searchText,
+      dueFrom,
+      dueTo,
+      refresh: refreshNext.current ? '1' : '',
+    });
+    refreshNext.current = false;
+    request
       .then((body) => {
         if (cancelled) return;
         setInvoices(body.invoices || []);
         setCustomers(body.customers || []);
         setReminderText(body.reminderText || null);
         setAsOf(body.asOf || '');
+        setPageInfo(body.page || null);
+        setTotals({
+          totalOverdue: body.totalOverdue ?? 0,
+          totalMatching: body.totalMatching ?? 0,
+          zohoRows: body.zohoRows ?? 0,
+          truncated: body.truncated === true,
+        });
       })
       .catch((err) => {
         if (!cancelled) setError(err.message);
@@ -283,7 +331,13 @@ export default function FollowUp() {
         if (!cancelled) setBusy(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [view, page, searchText, dueFrom, dueTo, reloadTick]);
+
+  function goToPage(next) {
+    closePanel();
+    setPage(next);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   useEffect(() => () => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
@@ -331,18 +385,15 @@ export default function FollowUp() {
     return () => { cancelled = true; };
   }, [selectedId, invoices]);
 
-  const filtered = useMemo(
-    () => invoices.filter((invoice) => matchesFollowUpFilters(invoice, { q, dueFrom, dueTo })),
-    [invoices, q, dueFrom, dueTo],
-  );
+  // The server already filtered and paged; this is the current page only.
+  const filtered = invoices;
   const byId = useMemo(() => new Map(invoices.map((row) => [row.invoiceId, row])), [invoices]);
-  const visibleIds = useMemo(() => new Set(filtered.map((row) => row.invoiceId)), [filtered]);
   const customerGroups = useMemo(() => customers
     .map((group) => {
       const all = group.invoiceIds.map((invoiceId) => byId.get(invoiceId)).filter(Boolean);
-      return { ...group, all, visible: all.filter((row) => visibleIds.has(row.invoiceId)) };
+      return { ...group, all, visible: all };
     })
-    .filter((group) => group.visible.length > 0), [customers, byId, visibleIds]);
+    .filter((group) => group.visible.length > 0), [customers, byId]);
   const selected = filtered.find((item) => item.invoiceId === selectedId) || null;
   const dueGroups = groupByDueDate(filtered);
   const openCustomer = openKey.startsWith('cust:')
@@ -613,11 +664,11 @@ export default function FollowUp() {
         {asOf ? ` As of ${displayDate(asOf)}.` : ''}
       </p>
       {error && <p className="message message-bad">{error}</p>}
-      {busy && <p className="muted">Loading overdue invoices…</p>}
-      {!busy && !error && invoices.length === 0 && (
+      {busy && !totals && <p className="muted">Loading overdue invoices from Zoho… the first load can take a little while.</p>}
+      {!busy && !error && totals && totals.totalOverdue === 0 && (
         <p className="card">No overdue invoices to remind today.</p>
       )}
-      {invoices.length > 0 && (
+      {totals && totals.totalOverdue > 0 && (
         <section className="card">
           <div className="title-row followup-head">
             <h2>Who to remind</h2>
@@ -673,10 +724,39 @@ export default function FollowUp() {
               </button>
             )}
           </div>
-          <p className="hint">
-            Showing {filtered.length} of {invoices.length} overdue invoice{invoices.length === 1 ? '' : 's'}
-            {view === 'customer' ? ` from ${customerGroups.length} customer${customerGroups.length === 1 ? '' : 's'}` : ''}.
-          </p>
+          <div className="title-row followup-count-row">
+            <p className="hint">
+              {totals.totalMatching === totals.totalOverdue
+                ? `${totals.totalOverdue.toLocaleString('id-ID')} overdue invoice${totals.totalOverdue === 1 ? '' : 's'}`
+                : `${totals.totalMatching.toLocaleString('id-ID')} of ${totals.totalOverdue.toLocaleString('id-ID')} overdue invoices match`}
+              {busy ? ' · loading…' : ''}
+            </p>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy}
+              onClick={() => {
+                closePanel();
+                refreshNext.current = true;
+                setReloadTick((n) => n + 1);
+              }}
+            >
+              Refresh from Zoho
+            </button>
+          </div>
+          {totals.zohoRows > totals.totalOverdue && (
+            <p className="hint">
+              Zoho sent {totals.zohoRows.toLocaleString('id-ID')} rows;
+              {' '}{(totals.zohoRows - totals.totalOverdue).toLocaleString('id-ID')} left out
+              (not yet due, nothing left to pay, not in rupiah, or listed twice).
+            </p>
+          )}
+          {totals.truncated && (
+            <p className="message message-warn">
+              Zoho has more overdue invoices than the app reads at once. Use the search or due-date filters to narrow the list.
+            </p>
+          )}
+          <Pager info={pageInfo} busy={busy} onPage={goToPage} />
           {filtered.length === 0 ? (
             <p className="muted">No invoices match these filters.</p>
           ) : view === 'customer' ? (
@@ -788,6 +868,7 @@ export default function FollowUp() {
               </table>
             </div>
           )}
+          {filtered.length > 0 && <Pager info={pageInfo} busy={busy} onPage={goToPage} />}
         </section>
       )}
     </>

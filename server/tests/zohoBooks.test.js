@@ -250,6 +250,38 @@ test('list overdue invoices calls only the invoices URL', async () => {
   assert.equal(calls.some((call) => call.url.includes('/books/v3/bills')), false);
 });
 
+test('overdue list also reads part-paid invoices and drops duplicates', async () => {
+  clearZohoTokenCache();
+  const statuses = [];
+  const row = (id, status) => ({
+    invoice_id: id, invoice_number: `INV-${id}`, customer_name: 'Pelanggan Satu',
+    due_date: '2026-09-10', status, balance: 75000, currency_code: 'IDR',
+  });
+  const fetchImpl = async (url, init) => {
+    if (String(url).includes('/oauth/v2/token')) return tokenResponse();
+    assert.equal(init?.method || 'GET', 'GET');
+    const status = new URL(String(url)).searchParams.get('status');
+    statuses.push(status);
+    const invoices = status === 'overdue'
+      ? [row('982000000561001', 'overdue')]
+      : [row('982000000561001', 'overdue'), row('982000000561002', 'partially_paid'), {
+        ...row('982000000561003', 'partially_paid'), due_date: '2026-12-01',
+      }];
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ code: 0, invoices, page_context: { has_more_page: false } }),
+    };
+  };
+  const stats = {};
+  const rows = await listOverdueInvoices({
+    zoho, refreshToken: zoho.refreshToken, fetchImpl, today: new Date('2026-10-13T00:00:00.000Z'), stats,
+  });
+  assert.deepEqual(statuses, ['overdue', 'partially_paid']);
+  assert.deepEqual(rows.map((r) => r.invoiceNumber), ['INV-982000000561001', 'INV-982000000561002']);
+  assert.deepEqual(stats, { zohoRows: 4, kept: 2, truncated: false });
+});
+
 test('oauth state expires and rejects a changed signature', () => {
   const secret = 'test-secret';
   assert.equal(verifyOauthState(createOauthState(secret), secret), true);

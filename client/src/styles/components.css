@@ -610,6 +610,16 @@ label.btn.is-disabled {
   height: 280px;
 }
 .followup-head { gap: var(--space-2); flex-wrap: wrap; }
+.followup-count-row { justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
+.followup-count-row .hint { margin: 0; }
+.followup-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+.followup-pager .hint { margin: 0; text-align: center; }
 .followup-view-toggle { margin: 0; }
 .followup-pick-cell { width: 36px; }
 .followup-pick-cell input[type="checkbox"] { width: 18px; height: 18px; }
@@ -690,6 +700,8 @@ label.btn.is-disabled {
   .followup-panel-head .btn,
   .followup-combined-list .btn { width: auto; }
   .actions.followup-view-toggle { flex-direction: row; }
+  .followup-pager .btn,
+  .followup-count-row .btn { width: auto; }
   .followup-view-toggle .btn { width: auto; flex: 1; }
   .followup-customer-head > * { width: 100%; }
   .capture-card {

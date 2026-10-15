@@ -460,16 +460,46 @@ export async function createExpense({ zoho, refreshToken, expense, file, fetchIm
   return { expenseId, receiptAttached: Boolean(file?.bytes?.length) };
 }
 
-export async function listOverdueInvoices({ zoho, refreshToken, fetchImpl = fetch, today = new Date() }) {
+// Zoho keeps a past-due invoice with a part payment as "partially_paid", not "overdue".
+const OVERDUE_STATUSES = ['overdue', 'partially_paid'];
+const OVERDUE_MAX_PAGES = 40;
+
+export async function listOverdueInvoices({
+  zoho, refreshToken, fetchImpl = fetch, today = new Date(), stats = null,
+}) {
   const hosts = zohoHosts(zoho.dc);
   const organizationId = String(zoho.organizationId || '');
   if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
   const token = await accessToken(zoho, refreshToken, fetchImpl);
   const invoices = [];
+  const seen = new Set();
+  let zohoRows = 0;
+  let truncated = false;
+  for (const status of OVERDUE_STATUSES) {
+    const result = await listInvoicesByStatus({
+      hosts, organizationId, token, status, fetchImpl, today, zoho,
+    });
+    zohoRows += result.zohoRows;
+    truncated = truncated || result.truncated;
+    for (const invoice of result.invoices) {
+      if (seen.has(invoice.invoiceId)) continue;
+      seen.add(invoice.invoiceId);
+      invoices.push(invoice);
+    }
+  }
+  if (stats) Object.assign(stats, { zohoRows, kept: invoices.length, truncated });
+  return invoices;
+}
+
+async function listInvoicesByStatus({
+  hosts, organizationId, token, status, fetchImpl, today, zoho,
+}) {
+  const invoices = [];
+  let zohoRows = 0;
   let page = 1;
   let hasMore = true;
-  while (hasMore && page <= 20) {
-    const url = `${hosts.api}/books/v3/invoices?organization_id=${organizationId}&status=overdue&page=${page}&per_page=200`;
+  while (hasMore && page <= OVERDUE_MAX_PAGES) {
+    const url = `${hosts.api}/books/v3/invoices?organization_id=${organizationId}&status=${status}&page=${page}&per_page=200`;
     assertAllowedUrl(url, zoho.dc, 'GET');
     const response = await fetchImpl(url, {
       method: 'GET',
@@ -484,6 +514,7 @@ export async function listOverdueInvoices({ zoho, refreshToken, fetchImpl = fetc
     let data = {};
     try { data = JSON.parse(text); } catch { data = {}; }
     const rows = Array.isArray(data.invoices) ? data.invoices : [];
+    zohoRows += rows.length;
     for (const row of rows) {
       // Keep long ids as strings even when JSON.parse made them numbers.
       if (row && row.invoice_id != null && typeof row.invoice_id !== 'string') {
@@ -502,7 +533,7 @@ export async function listOverdueInvoices({ zoho, refreshToken, fetchImpl = fetc
     page += 1;
     if (rows.length === 0) hasMore = false;
   }
-  return invoices;
+  return { invoices, zohoRows, truncated: hasMore };
 }
 
 function pdfFileName(headerValue, invoiceNumber, invoiceId) {

@@ -63,3 +63,37 @@ test('the WhatsApp draft uses the English reminder with due date and bank detail
   assert.match(text, /7228-0000-0522/);
   assert.match(text, /OCBC NISP/);
 });
+
+test('follow-up pages walk through every overdue invoice without gaps or repeats', async () => {
+  const { pageOf } = await import('../src/services/followUp/today.js');
+  const rows = Array.from({ length: 4012 }, (_, i) => ({ invoiceId: String(i + 1) }));
+  const seen = [];
+  let page = 1;
+  let info;
+  do {
+    info = pageOf(rows, page, 100);
+    seen.push(...info.rows.map((row) => row.invoiceId));
+    page += 1;
+  } while (page <= info.pageCount);
+  assert.equal(info.pageCount, 41);
+  assert.equal(seen.length, 4012);
+  assert.equal(new Set(seen).size, 4012);
+  const second = pageOf(rows, 2, 100);
+  assert.equal(second.from, 101);
+  assert.equal(second.to, 200);
+  // A page past the end shows the last page instead of nothing.
+  assert.equal(pageOf(rows, 99, 100).page, 41);
+  assert.equal(pageOf([], 1, 100).from, 0);
+});
+
+test('follow-up search and due-date filters cover the whole list', async () => {
+  const { filterOverdue } = await import('../src/services/followUp/today.js');
+  const rows = [
+    { invoiceId: '1', invoiceNumber: 'INV-1', customerName: 'Toko Satu', dueDate: '2026-09-01' },
+    { invoiceId: '2', invoiceNumber: 'INV-2', customerName: 'Warung Dua', dueDate: '2026-09-15' },
+    { invoiceId: '3', invoiceNumber: 'INV-3', customerName: 'Toko Tiga', dueDate: '2026-10-01' },
+  ];
+  assert.deepEqual(filterOverdue(rows, { q: 'toko' }).map((r) => r.invoiceId), ['1', '3']);
+  assert.deepEqual(filterOverdue(rows, { dueFrom: '2026-09-10', dueTo: '2026-09-30' }).map((r) => r.invoiceId), ['2']);
+  assert.equal(filterOverdue(rows, { dueFrom: 'not-a-date' }).length, 3);
+});
