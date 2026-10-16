@@ -191,16 +191,28 @@ export default function PaymentDetail() {
 
   const matchedCustomerId = payment?.matchedCustomerId || '';
   const allocationKey = (payment?.allocations || []).map((row) => row.invoiceId).join(',');
+  const openInvoiceKey = (payment?.customerOpenInvoices || []).map((row) => row.id).join(',');
   const candidateKey = (payment?.candidates || []).map((row) => row.invoiceId).join(',');
   const closed = ['approved', 'rejected'].includes(payment?.status);
 
-  // Seed the tick list from the matcher's full customer list immediately (not just
-  // the amount-matched allocations), then refresh from Zoho by customer id.
+  // Prefer the full unpaid list embedded on the payment detail (live Zoho).
+  // Fall back to matcher candidates, then a customerId refresh — never amount-only allocations.
   useEffect(() => {
     if (!canReview || closed || !matchedCustomerId) {
       setCustomerInvoices([]);
+      setLoadingInvoices(false);
       return undefined;
     }
+
+    const fromDetail = (payment?.customerOpenInvoices || [])
+      .filter((row) => Number(row.remaining) > 0)
+      .sort(oldestFirst);
+    if (fromDetail.length) {
+      setCustomerInvoices(fromDetail);
+      setLoadingInvoices(false);
+      return undefined;
+    }
+
     const seeded = (payment?.candidates || [])
       .filter((row) => !row.customerId || String(row.customerId) === String(matchedCustomerId))
       .map((row) => ({
@@ -223,7 +235,6 @@ export default function PaymentDetail() {
         const rows = (body.invoices || [])
           .filter((row) => Number(row.remaining) > 0)
           .sort(oldestFirst);
-        // Prefer the live Zoho list; keep the seeded candidates if Zoho returned nothing.
         if (rows.length) setCustomerInvoices(rows);
       })
       .catch(() => {
@@ -233,8 +244,7 @@ export default function PaymentDetail() {
         if (!cancelled) setLoadingInvoices(false);
       });
     return () => { cancelled = true; };
-    // candidateKey tracks when the matcher refreshes the full open-invoice list.
-  }, [canReview, closed, matchedCustomerId, candidateKey]);
+  }, [canReview, closed, matchedCustomerId, openInvoiceKey, candidateKey]);
 
   // Ticks follow the saved split whenever it changes on the server.
   useEffect(() => {
@@ -320,20 +330,21 @@ export default function PaymentDetail() {
   const adminFee = payment.ai?.adminFee || payment.bankFee || 0;
   const allocations = payment.allocations || [];
   const appliedById = new Map(allocations.map((row) => [String(row.invoiceId), row.applied]));
-  // Prefer every unpaid invoice for the customer. Never drop to amount-only allocations
-  // while candidates (all open invoices from matching) are available.
+  // Full unpaid list first. Amount-matched allocations are only a last resort.
   const pickRows = customerInvoices.length
     ? customerInvoices
-    : (payment.candidates || []).length
-      ? (payment.candidates || []).map((row) => ({
-        id: row.invoiceId,
-        invoiceNo: row.invoiceNo,
-        date: row.date,
-        remaining: row.remaining,
-      }))
-      : allocations.map((row) => ({
-        id: row.invoiceId, invoiceNo: row.invoiceNo, date: row.date, remaining: row.remaining,
-      }));
+    : (payment.customerOpenInvoices || []).length
+      ? (payment.customerOpenInvoices || [])
+      : (payment.candidates || []).length
+        ? (payment.candidates || []).map((row) => ({
+          id: row.invoiceId,
+          invoiceNo: row.invoiceNo,
+          date: row.date,
+          remaining: row.remaining,
+        }))
+        : allocations.map((row) => ({
+          id: row.invoiceId, invoiceNo: row.invoiceNo, date: row.date, remaining: row.remaining,
+        }));
   const tickedTotal = pickRows
     .filter((row) => ticked.has(String(row.id)))
     .reduce((total, row) => total + row.remaining, 0);
@@ -540,6 +551,13 @@ export default function PaymentDetail() {
                 )}
               </div>
               {loadingInvoices && <p className="hint">Loading this customer&apos;s unpaid invoices…</p>}
+              {payment.customerOpenInvoicesError && !customerInvoices.length && (
+                <p className="message message-warn">{payment.customerOpenInvoicesError}</p>
+              )}
+              <p className="hint">
+                {pickRows.length} unpaid invoice{pickRows.length === 1 ? '' : 's'} for this customer
+                {ticked.size ? ` · ${ticked.size} ticked for this transfer` : ''}
+              </p>
               <ul className="pay-pick-list">
                 {pickRows.map((row) => {
                   const key = String(row.id);

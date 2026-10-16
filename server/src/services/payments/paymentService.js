@@ -457,6 +457,22 @@ export async function processPayment(id, env) {
       storeAllocations(latest, split.allocations);
       latest.bankFee = split.bankFee;
       latest.matchType = split.matchType;
+      // Still load every unpaid invoice for this customer for the tick list.
+      if (zohoOutcome.status === 'fulfilled' && latest.zohoCustomerId) {
+        const cid = String(latest.zohoCustomerId);
+        latest.matchCandidates = sortOldestFirst(
+          zohoOutcome.value.filter((row) => String(row.customerId) === cid && Number(row.remaining) > 0),
+        ).slice(0, MAX_ALLOCATIONS).map((row) => ({
+          invoiceId: row.invoiceId,
+          invoiceNo: row.invoiceNo || row.invoiceNumber,
+          customerId: row.customerId,
+          customerName: row.customerName,
+          remaining: row.remaining,
+          date: row.date || null,
+          dueDate: row.dueDate || null,
+          status: row.status || '',
+        }));
+      }
       if (!['matched', 'verified', 'approved'].includes(latest.status)) {
         latest.status = latest.statementVerified ? 'verified' : 'matched';
       }
@@ -603,13 +619,26 @@ export async function listPayments(user, query = {}) {
   return rows.map(serializePayment);
 }
 
-export async function getPayment(id, user) {
-  const payment = await BankPayment.findById(id);
-  if (!payment) throw httpError(404, 'Payment not found.');
-  if (user.role === 'staff' && String(payment.uploadedBy) !== String(user.id)) {
-    throw httpError(403, 'You do not have access to this payment.');
+/**
+ * Payment detail for the review screen.
+ * When a customer is matched, attach every unpaid Zoho invoice for that customer
+ * (not only the amount-matched allocation) so the tick list does not need a second request.
+ */
+export async function getPayment(id, user, env = null) {
+  const payment = await loadPayment(id, user);
+  const dto = serializePayment(payment);
+  const customerId = String(payment.zohoCustomerId || '').trim();
+  const closed = ['approved', 'rejected'].includes(payment.status);
+  if (!env || !customerId || closed) return dto;
+
+  try {
+    dto.customerOpenInvoices = await listOpenInvoices(env, '', { customerId });
+  } catch (error) {
+    // Fall back to matcher candidates; the UI still prefers those over amount-only allocations.
+    dto.customerOpenInvoices = null;
+    dto.customerOpenInvoicesError = error.message || 'Could not refresh unpaid invoices from Zoho.';
   }
-  return serializePayment(payment);
+  return dto;
 }
 
 export async function loadPayment(id, user) {

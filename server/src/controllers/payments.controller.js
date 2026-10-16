@@ -37,9 +37,9 @@ export function list() {
   });
 }
 
-export function detail() {
+export function detail(env) {
   return asyncHandler(async (req, res) => {
-    res.json({ payment: await getPayment(req.params.id, req.user) });
+    res.json({ payment: await getPayment(req.params.id, req.user, env) });
   });
 }
 

@@ -20,7 +20,7 @@ export function createPaymentsRouter(env) {
   router.get('/', list());
   router.post('/', staff, upload, uploadPayments(env));
   router.get('/:id/file', file(env));
-  router.get('/:id', detail());
+  router.get('/:id', detail(env));
   router.delete('/:id', staff, remove(env));
   router.patch('/:id/hints', accountant, killSwitch, hints(env));
   router.patch('/:id/match', accountant, killSwitch, match(env));

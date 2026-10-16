@@ -16,6 +16,8 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/health': `http://localhost:${apiPort}`,
         '/auth': `http://localhost:${apiPort}`,
+        '/admin': `http://localhost:${apiPort}`,
+        '/imports': `http://localhost:${apiPort}`,
         '/documents': {
           target: `http://localhost:${apiPort}`,
           bypass(req) {
@@ -28,7 +30,18 @@ export default defineConfig(({ mode }) => {
             if (req.headers.accept?.includes('text/html')) return '/index.html';
           },
         },
-        '/admin': `http://localhost:${apiPort}`,
+        '/payments': {
+          target: `http://localhost:${apiPort}`,
+          bypass(req) {
+            if (req.headers.accept?.includes('text/html')) return '/index.html';
+          },
+        },
+        '/deliveries': {
+          target: `http://localhost:${apiPort}`,
+          bypass(req) {
+            if (req.headers.accept?.includes('text/html')) return '/index.html';
+          },
+        },
       },
     },
   };
