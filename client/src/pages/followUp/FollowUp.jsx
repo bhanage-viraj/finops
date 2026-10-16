@@ -8,11 +8,12 @@ function displayDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
+/** WhatsApp Web in the browser — avoids opening the native WhatsApp app. */
 function whatsappUrl(phone, text) {
   const digits = String(phone || '').replace(/\D/g, '');
   const q = encodeURIComponent(text || '');
-  if (digits) return `https://wa.me/${digits}?text=${q}`;
-  return `https://wa.me/?text=${q}`;
+  if (digits) return `https://web.whatsapp.com/send?phone=${digits}&text=${q}`;
+  return `https://web.whatsapp.com/send?text=${q}`;
 }
 
 function safeFileName(name, fallback) {
@@ -508,18 +509,13 @@ export default function FollowUp() {
     }
   }
 
-  async function shareFiles(files, phone, title) {
-    const canShareFiles = typeof navigator.share === 'function'
-      && (!navigator.canShare || navigator.canShare({ files }));
-    if (canShareFiles) {
-      await navigator.share({ files, text: message, title });
-      return 'Share sheet opened. Choose WhatsApp to send.';
-    }
+  async function shareFiles(files, phone) {
+    // Always WhatsApp Web — navigator.share opens the native app on many machines.
     files.forEach(triggerDownload);
     window.open(whatsappUrl(phone, message), '_blank', 'noopener,noreferrer');
     return files.length > 1
-      ? `${files.length} PDFs downloaded. Attach them in WhatsApp after the chat opens.`
-      : 'PDF downloaded. Attach that file in WhatsApp after the chat opens.';
+      ? `${files.length} PDFs downloaded. Attach them in WhatsApp Web after the chat opens.`
+      : 'PDF downloaded. Attach that file in WhatsApp Web after the chat opens.';
   }
 
   async function shareOnWhatsApp() {
@@ -528,7 +524,7 @@ export default function FollowUp() {
     setSharing(true);
     try {
       const file = await loadInvoiceFile(selected);
-      setNote(await shareFiles([file], selected.customerPhone, selected.invoiceNumber || 'Invoice'));
+      setNote(await shareFiles([file], selected.customerPhone));
     } catch (err) {
       if (err?.name === 'AbortError') {
         setNote('');
@@ -548,7 +544,7 @@ export default function FollowUp() {
     navigator.clipboard?.writeText(message).catch(() => {});
     try {
       const files = await loadInvoiceFiles(openRows);
-      setNote(await shareFiles(files, openCustomer.customerPhone, `${openRows.length} invoices`));
+      setNote(await shareFiles(files, openCustomer.customerPhone));
     } catch (err) {
       if (err?.name === 'AbortError') {
         setNote('');
