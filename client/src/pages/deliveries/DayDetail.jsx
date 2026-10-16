@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   fetchDeliveryDay,
   fetchRouteMessage,
@@ -10,6 +10,7 @@ import {
   syncCartrack,
   uploadNota,
   confirmNota,
+  deleteDeliveryDay,
 } from '../../api/deliveries.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import LocationMap from './LocationMap.jsx';
@@ -39,6 +40,7 @@ function itemsLabel(stop) {
 
 export default function DayDetail() {
   const { dayId } = useParams();
+  const navigate = useNavigate();
   const [view, setView] = useState('areas'); // areas | all
   const [day, setDay] = useState(null);
   const [routes, setRoutes] = useState([]);
@@ -178,6 +180,19 @@ export default function DayDetail() {
         }
       }
     }, 'Nota uploaded — quantities updated when the check passed.');
+  }
+
+  async function onDeleteSheet() {
+    if (!window.confirm(`Delete sheet ${day?.date || ''}? This removes all stops and areas for that day.`)) return;
+    setBusy(true);
+    setError('');
+    try {
+      await deleteDeliveryDay(dayId);
+      navigate('/deliver');
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
   }
 
   if (!day) {
@@ -345,6 +360,9 @@ export default function DayDetail() {
               Send next area ({sendQueue.length} left)
             </button>
           )}
+          <button type="button" className="btn btn-secondary" disabled={busy} onClick={onDeleteSheet}>
+            Delete sheet
+          </button>
         </div>
       </header>
 

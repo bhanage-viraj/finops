@@ -72,11 +72,14 @@ export default function DeliveryDays() {
     }
   }
 
-  async function onDelete(dayId) {
-    if (!window.confirm('Delete this delivery day and all its stops?')) return;
+  async function onDelete(dayId, dateLabel) {
+    if (!window.confirm(`Delete sheet ${dateLabel || ''}? This removes all stops and areas for that day.`)) return;
     setBusy(true);
+    setError('');
+    setMessage('');
     try {
       await deleteDeliveryDay(dayId);
+      setMessage('Sheet deleted.');
       load();
     } catch (err) {
       setError(err.message);
@@ -161,8 +164,13 @@ export default function DeliveryDays() {
                     <td>{day.summary?.delivered ?? 0}</td>
                     <td className="sheet-actions">
                       <Link className="btn btn-primary btn-compact" to={`/deliver/${day._id}`}>Open</Link>
-                      <button type="button" className="btn btn-secondary btn-compact" disabled={busy} onClick={() => onDelete(day._id)}>
-                        Delete
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-compact"
+                        disabled={busy}
+                        onClick={() => onDelete(day._id, day.date)}
+                      >
+                        Delete sheet
                       </button>
                     </td>
                   </tr>
