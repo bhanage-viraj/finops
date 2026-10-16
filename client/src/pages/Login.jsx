@@ -44,9 +44,6 @@ export default function Login() {
         </label>
         {error && <p className="message message-bad">{error}</p>}
         <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
-        <p className="hint" style={{ marginTop: 12 }}>
-          Delivery team? <a href="/deliver/login">Sign in to Deliver</a>
-        </p>
       </form>
     </main>
   );

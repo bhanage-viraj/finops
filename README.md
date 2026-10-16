@@ -43,9 +43,9 @@ A sample you can photograph or upload is generated with `node scripts/makeSample
 
 ## Deliveries
 
-Open **Deliver** at http://localhost:5173/deliver (separate login at `/deliver/login`). Upload the daily order `.xlsx` (List editing Driver) and optional historical LIST DRIVER workbooks. The app splits stops by area, builds Google Maps links without an API key, prepares WhatsApp messages for drivers, reads Cartrack vehicles/GPS/job status (never creates or completes Cartrack jobs), and checks Nota Penjualan photos against the plan.
+Open **Deliver** at http://localhost:5173/deliver (same FinOps sign-in at `/login`). Upload the daily order `.xlsx` (List editing Driver) and optional historical LIST DRIVER workbooks. The app splits stops by area, builds Google Maps links without an API key, prepares WhatsApp messages for drivers, reads Cartrack vehicles/GPS/job status (never creates or completes Cartrack jobs), and checks Nota Penjualan photos against the plan.
 
-Set `CARTRACK_USERNAME`, `CARTRACK_API_KEY`, `SEED_DELIVERY_PASSWORD`, and optional `DEPOT_LAT` / `DEPOT_LNG` in `.env`. Seed creates `delivery@example.com` (role `delivery`). FinOps office login stays at `/login`.
+Set `CARTRACK_USERNAME`, `CARTRACK_API_KEY`, `SEED_DELIVERY_PASSWORD`, and optional `DEPOT_LAT` / `DEPOT_LNG` in `.env`. Seed creates `delivery@example.com` (role `delivery`).
 
 ## Payment reconciliation
 

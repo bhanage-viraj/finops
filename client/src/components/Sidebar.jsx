@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext.jsx';
 
-const LINKS = [
+const OFFICE_LINKS = [
   ['/', 'Overview'],
   ['/documents', 'Documents'],
   ['/payments', 'Payments'],
@@ -8,11 +9,17 @@ const LINKS = [
   ['/deliver', 'Deliver'],
 ];
 
+const DELIVERY_LINKS = [
+  ['/deliver', 'Deliver'],
+];
+
 export default function Sidebar() {
+  const { user } = useAuth();
+  const links = user?.role === 'delivery' ? DELIVERY_LINKS : OFFICE_LINKS;
   return (
     <nav className="nav" aria-label="Main">
-      {LINKS.map(([to, label]) => (
-        <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+      {links.map(([to, label]) => (
+        <NavLink key={to} to={to} end={to === '/' || to === '/deliver'} className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
           {label}
         </NavLink>
       ))}
