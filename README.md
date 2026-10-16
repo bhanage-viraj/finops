@@ -43,7 +43,7 @@ A sample you can photograph or upload is generated with `node scripts/makeSample
 
 ## Deliveries
 
-Open **Deliver** at http://localhost:5173/deliver (same FinOps sign-in at `/login`). Upload the daily order `.xlsx` (List editing Driver) and optional historical LIST DRIVER workbooks. The app splits stops by area, builds Google Maps links without an API key, prepares WhatsApp messages for drivers, reads Cartrack vehicles/GPS/job status (never creates or completes Cartrack jobs), and checks Nota Penjualan photos against the plan.
+Open **Deliver** at http://localhost:5173/deliver (same FinOps sign-in at `/login`). Pick a date, upload the order Excel — stops are split by area with Google Maps links. Open a day to send map lists to drivers (per stop or whole area) on WhatsApp Web, sync read-only Cartrack status, and attach Nota photos to check delivered quantities.
 
 Set `CARTRACK_USERNAME`, `CARTRACK_API_KEY`, `SEED_DELIVERY_PASSWORD`, and optional `DEPOT_LAT` / `DEPOT_LNG` in `.env`. Seed creates `delivery@example.com` (role `delivery`).
 

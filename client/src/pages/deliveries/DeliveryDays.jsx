@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   fetchDeliveryDays,
   importDeliveryDay,
@@ -8,20 +8,27 @@ import {
 } from '../../api/deliveries.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 
+function todayIso() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export default function DeliveryDays() {
+  const navigate = useNavigate();
   const [days, setDays] = useState([]);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [date, setDate] = useState('');
+  const [date, setDate] = useState(todayIso());
   const orderRef = useRef(null);
   const historyRef = useRef(null);
 
   function load() {
     fetchDeliveryDays()
-      .then((body) => {
-        setDays(body.days || []);
-      })
+      .then((body) => setDays(body.days || []))
       .catch((err) => setError(err.message));
   }
 
@@ -35,8 +42,10 @@ export default function DeliveryDays() {
     setMessage('');
     try {
       const result = await importDeliveryDay(file, date || undefined);
-      setMessage(`Imported ${result.summary?.stopCount || 0} stops for ${result.day?.date}.`);
+      const id = result.day?._id || result.day?.id;
+      setMessage(`Imported ${result.summary?.stopCount || 0} stops · split into areas with Maps links.`);
       load();
+      if (id) navigate(`/deliver/${id}`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -53,7 +62,7 @@ export default function DeliveryDays() {
     setMessage('');
     try {
       const result = await importDeliveryHistory(file);
-      setMessage(`History: ${result.routeTabs} routes, ${result.customersTouched} customer rows, areas: ${(result.areas || []).join(', ')}`);
+      setMessage(`History saved · ${(result.areas || []).join(', ') || 'areas updated'}.`);
       load();
     } catch (err) {
       setError(err.message);
@@ -77,61 +86,63 @@ export default function DeliveryDays() {
   }
 
   return (
-    <div className="page">
+    <div className="page sheet-page">
       <header className="page-header">
         <div>
           <h1>Deliver</h1>
-          <p className="hint">Upload the daily list, fix locations, send maps to drivers, track status, check notas.</p>
+          <p className="hint">Upload the Excel → auto Maps links → send to drivers by area.</p>
         </div>
       </header>
 
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
 
-      <section className="card">
-        <h2>New day</h2>
-        <p className="hint">Upload the order workbook (List editing Driver). Optional date override if the sheet name is unclear.</p>
-        <div className="row gap">
-          <label>
-            Date (optional)
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      <section className="card sheet-upload">
+        <h2>Upload sheet</h2>
+        <p className="hint">
+          Pick the delivery date, then upload the order workbook. Stops are split by area automatically
+          and each row gets a Google Maps link.
+        </p>
+        <div className="row gap wrap">
+          <label className="field" style={{ margin: 0 }}>
+            <span className="field-label">Date</span>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
           </label>
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => orderRef.current?.click()}>
-            Upload order .xlsx
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !date}
+            onClick={() => orderRef.current?.click()}
+          >
+            {busy ? 'Uploading…' : 'Upload Excel'}
           </button>
-          <input ref={orderRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={onImportOrder} />
+          <input
+            ref={orderRef}
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            hidden
+            onChange={onImportOrder}
+          />
+          <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => historyRef.current?.click()}>
+            Learn history (optional)
+          </button>
+          <input ref={historyRef} type="file" accept=".xlsx" hidden onChange={onImportHistory} />
         </div>
       </section>
 
-      <section className="card">
-        <h2>Learn from history</h2>
-        <p className="hint">Upload past LIST DRIVER workbooks so areas, vehicles and customers are remembered.</p>
-        <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => historyRef.current?.click()}>
-          Upload history .xlsx
-        </button>
-        <input ref={historyRef} type="file" accept=".xlsx" hidden onChange={onImportHistory} />
-      </section>
-
-      <section className="card">
-        <h2>Cartrack</h2>
-        <p className="message message-ok">
-          Read-only: vehicles, GPS suggestions and job status sync. FinOps never creates or completes Cartrack jobs.
-        </p>
-      </section>
-
-      <section className="card">
+      <section className="card sheet-board">
         <h2>Days</h2>
-        {days.length === 0 && <p className="hint">No delivery days yet. Upload an order sheet.</p>}
+        {days.length === 0 && <p className="hint">No days yet — upload a sheet above.</p>}
         {days.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap sheet-table">
             <table>
               <thead>
                 <tr>
                   <th>Date</th>
                   <th>Status</th>
                   <th>Stops</th>
-                  <th>Locations</th>
-                  <th>New</th>
+                  <th>Maps ready</th>
+                  <th>Need pin</th>
                   <th>Delivered</th>
                   <th />
                 </tr>
@@ -140,19 +151,17 @@ export default function DeliveryDays() {
                 {days.map((day) => (
                   <tr key={day._id}>
                     <td>
-                      <Link to={`/deliver/${day._id}`}>{day.date}</Link>
-                      <div className="muted">{day.label}</div>
+                      <Link to={`/deliver/${day._id}`}><strong>{day.date}</strong></Link>
+                      {day.label && <div className="muted sheet-sub">{day.label}</div>}
                     </td>
                     <td><StatusBadge status={day.status} /></td>
                     <td>{day.summary?.stopCount ?? '—'}</td>
-                    <td>
-                      {day.summary?.exactLocations ?? 0} exact
-                      {day.summary?.needsLocation ? ` · ${day.summary.needsLocation} need pin` : ''}
-                    </td>
-                    <td>{day.summary?.newCustomers ?? 0}</td>
+                    <td>{day.summary?.exactLocations ?? 0}</td>
+                    <td>{day.summary?.needsLocation ?? 0}</td>
                     <td>{day.summary?.delivered ?? 0}</td>
-                    <td>
-                      <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => onDelete(day._id)}>
+                    <td className="sheet-actions">
+                      <Link className="btn btn-primary btn-compact" to={`/deliver/${day._id}`}>Open</Link>
+                      <button type="button" className="btn btn-secondary btn-compact" disabled={busy} onClick={() => onDelete(day._id)}>
                         Delete
                       </button>
                     </td>
