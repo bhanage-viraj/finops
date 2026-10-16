@@ -80,7 +80,7 @@ export default function DeliveryDays() {
     <div className="page">
       <header className="page-header">
         <div>
-          <h1>Deliveries</h1>
+          <h1>Deliver</h1>
           <p className="hint">Upload the daily list, fix locations, send maps to drivers, track status, check notas.</p>
         </div>
       </header>
@@ -140,7 +140,7 @@ export default function DeliveryDays() {
                 {days.map((day) => (
                   <tr key={day._id}>
                     <td>
-                      <Link to={`/deliveries/${day._id}`}>{day.date}</Link>
+                      <Link to={`/deliver/${day._id}`}>{day.date}</Link>
                       <div className="muted">{day.label}</div>
                     </td>
                     <td><StatusBadge status={day.status} /></td>

@@ -11,6 +11,7 @@ export default function Login() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  if (user?.role === 'delivery') return <Navigate to="/deliver" replace />;
   if (user) return <Navigate to="/" replace />;
 
   async function onSubmit(event) {
@@ -20,7 +21,7 @@ export default function Login() {
     try {
       const result = await login(email, password);
       signIn(result.user, result.token);
-      navigate('/');
+      navigate(result.user?.role === 'delivery' ? '/deliver' : '/');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -43,6 +44,9 @@ export default function Login() {
         </label>
         {error && <p className="message message-bad">{error}</p>}
         <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <p className="hint" style={{ marginTop: 12 }}>
+          Delivery team? <a href="/deliver/login">Sign in to Deliver</a>
+        </p>
       </form>
     </main>
   );

@@ -164,7 +164,7 @@ export default function DayDetail() {
     <div className="page">
       <header className="page-header">
         <div>
-          <p className="hint"><Link to="/deliveries">Deliveries</Link></p>
+          <p className="hint"><Link to="/deliver">Deliver</Link></p>
           <h1>{day.date}</h1>
           <p className="hint">{day.label} · <StatusBadge status={day.status} /></p>
         </div>

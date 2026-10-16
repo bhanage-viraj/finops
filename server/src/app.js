@@ -97,6 +97,8 @@ export function createApp(env, options = {}) {
         || req.path.startsWith('/payments/')
         || req.path === '/deliveries'
         || req.path.startsWith('/deliveries/')
+        || req.path === '/deliver'
+        || req.path.startsWith('/deliver/')
       ) {
         sendSpa(res);
         return;
