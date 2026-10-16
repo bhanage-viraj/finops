@@ -47,6 +47,29 @@ function oldestFirst(a, b) {
   return byDay || String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
 }
 
+/** Merge open-invoice lists by id. First source wins for each invoice. */
+function mergeOpenInvoiceRows(...lists) {
+  const byId = new Map();
+  for (const list of lists) {
+    for (const row of list || []) {
+      const id = String(row.id || row.invoiceId || '').trim();
+      if (!id || byId.has(id)) continue;
+      const remaining = Number(row.remaining);
+      if (!Number.isFinite(remaining) || remaining <= 0) continue;
+      byId.set(id, {
+        id,
+        invoiceNo: row.invoiceNo || row.invoiceNumber || '',
+        date: row.date || null,
+        dueDate: row.dueDate || null,
+        remaining,
+        erpCustomerId: row.erpCustomerId || row.customerId || '',
+        customerName: row.customerName || '',
+      });
+    }
+  }
+  return [...byId.values()].sort(oldestFirst);
+}
+
 function ReadSteps({ status, hasMatch, hasAmount }) {
   const step = status === 'failed' ? 0
     : status === 'uploaded' ? 1
@@ -330,21 +353,26 @@ export default function PaymentDetail() {
   const adminFee = payment.ai?.adminFee || payment.bankFee || 0;
   const allocations = payment.allocations || [];
   const appliedById = new Map(allocations.map((row) => [String(row.invoiceId), row.applied]));
-  // Full unpaid list first. Amount-matched allocations are only a last resort.
-  const pickRows = customerInvoices.length
-    ? customerInvoices
-    : (payment.customerOpenInvoices || []).length
-      ? (payment.customerOpenInvoices || [])
-      : (payment.candidates || []).length
-        ? (payment.candidates || []).map((row) => ({
-          id: row.invoiceId,
-          invoiceNo: row.invoiceNo,
-          date: row.date,
-          remaining: row.remaining,
-        }))
-        : allocations.map((row) => ({
-          id: row.invoiceId, invoiceNo: row.invoiceNo, date: row.date, remaining: row.remaining,
-        }));
+  // Always show every unpaid invoice we know about for this customer.
+  // AI may pre-tick the amount fit — that must not hide the rest of the list.
+  const pickRows = mergeOpenInvoiceRows(
+    payment.customerOpenInvoices,
+    customerInvoices,
+    (payment.candidates || []).map((row) => ({
+      id: row.invoiceId,
+      invoiceNo: row.invoiceNo,
+      date: row.date,
+      remaining: row.remaining,
+      customerId: row.customerId,
+      customerName: row.customerName,
+    })),
+    allocations.map((row) => ({
+      id: row.invoiceId,
+      invoiceNo: row.invoiceNo,
+      date: row.date,
+      remaining: row.remaining,
+    })),
+  );
   const tickedTotal = pickRows
     .filter((row) => ticked.has(String(row.id)))
     .reduce((total, row) => total + row.remaining, 0);
@@ -533,7 +561,7 @@ export default function PaymentDetail() {
           {invoice && !closed && pickRows.length > 0 && (
             <div className="payment-invoice-pick">
               <div className="title-row">
-                <p className="field-label">Which invoices does this transfer pay?</p>
+                <p className="field-label">All unpaid invoices for this customer</p>
                 {canFindCustomer && pickRows.length > 1 && (
                   <div className="actions payment-tick-tools">
                     <button
@@ -555,8 +583,8 @@ export default function PaymentDetail() {
                 <p className="message message-warn">{payment.customerOpenInvoicesError}</p>
               )}
               <p className="hint">
-                {pickRows.length} unpaid invoice{pickRows.length === 1 ? '' : 's'} for this customer
-                {ticked.size ? ` · ${ticked.size} ticked for this transfer` : ''}
+                Showing all {pickRows.length} unpaid invoice{pickRows.length === 1 ? '' : 's'}
+                {ticked.size ? ` · AI ticked ${ticked.size} for this amount — change ticks if wrong` : ''}
               </p>
               <ul className="pay-pick-list">
                 {pickRows.map((row) => {

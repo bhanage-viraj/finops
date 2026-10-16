@@ -462,7 +462,7 @@ export async function processPayment(id, env) {
         const cid = String(latest.zohoCustomerId);
         latest.matchCandidates = sortOldestFirst(
           zohoOutcome.value.filter((row) => String(row.customerId) === cid && Number(row.remaining) > 0),
-        ).slice(0, MAX_ALLOCATIONS).map((row) => ({
+        ).map((row) => ({
           invoiceId: row.invoiceId,
           invoiceNo: row.invoiceNo || row.invoiceNumber,
           customerId: row.customerId,
@@ -708,10 +708,10 @@ export async function setPaymentMatch(id, user, body = {}, env) {
     : 'Matched manually by an accountant.'];
   payment.flags = (payment.flags || []).filter((f) => f !== 'unidentified');
   // Keep every unpaid invoice for this customer on the payment so the tick list
-  // is not limited to the amount-matched subset the AI first suggested.
+  // shows the full outstanding set — amount matching only pre-ticks a subset.
   payment.matchCandidates = sortOldestFirst(
     invoices.filter((row) => String(row.customerId) === String(invoice.customerId) && Number(row.remaining) > 0),
-  ).slice(0, MAX_ALLOCATIONS).map((row) => ({
+  ).map((row) => ({
     invoiceId: row.invoiceId,
     invoiceNo: row.invoiceNo || row.invoiceNumber,
     customerId: row.customerId,

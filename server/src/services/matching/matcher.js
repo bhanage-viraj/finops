@@ -360,12 +360,12 @@ export async function matchPayment({
   if (applied < received) matchType = 'over';
   else if (chosen.some((row) => row.applied < row.remaining)) matchType = 'partial';
 
-  // Show ALL of this customer's open invoices (oldest first), not only the amount fit.
-  // The accountant ticks which ones this transfer pays.
+  // Always return EVERY open invoice for this customer (oldest first).
+  // Amount matching only chooses which ones are pre-ticked — never hides the rest.
   const customerId = String(first.customerId);
   const shown = sortOldestFirst(
     candidates.filter((c) => String(c.customerId) === customerId),
-  ).slice(0, MAX_ALLOCATIONS);
+  );
 
   return {
     matchedInvoiceId: first.invoiceId,
