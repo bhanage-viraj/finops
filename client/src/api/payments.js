@@ -46,8 +46,11 @@ export function deletePayment(id) {
   return api(`/payments/${id}`, { method: 'DELETE' });
 }
 
-export function fetchOpenInvoices(q = '') {
-  const suffix = q ? `?q=${encodeURIComponent(q)}` : '';
+export function fetchOpenInvoices(q = '', customerId = '') {
+  const query = new URLSearchParams();
+  if (q) query.set('q', q);
+  if (customerId) query.set('customerId', String(customerId));
+  const suffix = query.toString() ? `?${query}` : '';
   return api(`/payments/invoices/open${suffix}`);
 }
 

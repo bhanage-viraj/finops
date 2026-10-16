@@ -678,6 +678,24 @@ export async function setPaymentMatch(id, user, body = {}, env) {
     ? `${picked.length} invoices chosen by an accountant.`
     : 'Matched manually by an accountant.'];
   payment.flags = (payment.flags || []).filter((f) => f !== 'unidentified');
+  // Keep every unpaid invoice for this customer on the payment so the tick list
+  // is not limited to the amount-matched subset the AI first suggested.
+  payment.matchCandidates = sortOldestFirst(
+    invoices.filter((row) => String(row.customerId) === String(invoice.customerId) && Number(row.remaining) > 0),
+  ).slice(0, MAX_ALLOCATIONS).map((row) => ({
+    invoiceId: row.invoiceId,
+    invoiceNo: row.invoiceNo || row.invoiceNumber,
+    customerId: row.customerId,
+    customerName: row.customerName,
+    remaining: row.remaining,
+    amountType: null,
+    fit: null,
+    bankFee: 0,
+    nameScore: 1,
+    date: row.date || null,
+    dueDate: row.dueDate || null,
+    status: row.status || '',
+  }));
   // Keep "processing" so the UI still shows AI progress; finish when AI completes.
   if (!['uploaded', 'processing'].includes(payment.status)) {
     payment.status = payment.statementVerified ? 'verified' : 'matched';
@@ -912,14 +930,8 @@ export function customerSearchRank(query, customerName) {
   return score >= WEAK_NAME ? 3 - score : null;
 }
 
-/**
- * Unpaid Zoho invoices for the Payments link UI.
- * With a keyword, return name / invoice# matches, best name first, oldest invoice first.
- */
-export async function listOpenInvoices(env, search = '') {
-  const invoices = await loadZohoInvoices(env);
-  const q = String(search || '').trim();
-  const mapped = invoices.map((invoice) => ({
+function mapOpenInvoiceRow(invoice) {
+  return {
     id: invoice.invoiceId,
     invoiceNo: invoice.invoiceNo || invoice.invoiceNumber,
     amount: null,
@@ -930,10 +942,28 @@ export async function listOpenInvoices(env, search = '') {
     dueDate: invoice.dueDate,
     customerName: invoice.customerName,
     erpCustomerId: invoice.customerId,
-  }));
+  };
+}
+
+/**
+ * Pick which open-invoice rows the Payments UI should show.
+ * customerId → every unpaid invoice for that customer (not filtered by transfer amount).
+ * search → name / invoice# matches. Neither → first 100.
+ */
+export function selectOpenInvoices(mapped, search = '', { customerId = '' } = {}) {
+  const cid = String(customerId || '').trim();
+  if (cid) {
+    return mapped
+      .filter((row) => String(row.erpCustomerId) === cid && Number(row.remaining) > 0)
+      .sort((a, b) => {
+        const byDay = String(a.date || a.dueDate || '').localeCompare(String(b.date || b.dueDate || ''));
+        return byDay || String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
+      });
+  }
+
+  const q = String(search || '').trim();
   if (!q) return mapped.slice(0, 100);
 
-  // Score each customer once; customers have many open invoices.
   const nameRanks = new Map();
   const qInvoice = q.toLowerCase().replace(/\s+/g, '');
   const scored = [];
@@ -953,6 +983,16 @@ export async function listOpenInvoices(env, search = '') {
     return String(a.row.date || a.row.dueDate || '').localeCompare(String(b.row.date || b.row.dueDate || ''));
   });
   return scored.slice(0, 40).map((entry) => entry.row);
+}
+
+/**
+ * Unpaid Zoho invoices for the Payments link UI.
+ * With customerId: every unpaid invoice for that customer (oldest first) — not amount-filtered.
+ * With a keyword: name / invoice# matches, best name first, oldest invoice first.
+ */
+export async function listOpenInvoices(env, search = '', { customerId = '' } = {}) {
+  const invoices = await loadZohoInvoices(env);
+  return selectOpenInvoices(invoices.map(mapOpenInvoiceRow), search, { customerId });
 }
 
 export function fileKeyFor(payment) {

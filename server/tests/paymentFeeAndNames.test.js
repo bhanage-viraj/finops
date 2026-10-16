@@ -6,7 +6,7 @@ import { nameSimilarity } from '../src/services/matching/normalizeName.js';
 import { STRONG_NAME } from '../src/services/matching/rules.js';
 import { assertPaymentExtraction } from '../src/services/ai/schemas.js';
 import { resolveCaptionDate, splitCaption } from '../src/services/payments/captionHints.js';
-import { customerSearchRank } from '../src/services/payments/paymentService.js';
+import { customerSearchRank, selectOpenInvoices } from '../src/services/payments/paymentService.js';
 
 function noDuplicates(t) {
   const original = BankPayment.find;
@@ -198,4 +198,33 @@ test('invoice search finds Zoho spelling from the WhatsApp spelling', () => {
   assert.equal(customerSearchRank('boga', 'Toko Sari Boga'), 1);
   assert.equal(customerSearchRank('toko', 'Toko Sari Boga'), 0);
   assert.equal(customerSearchRank('Budi', 'Toko Sari Boga'), null);
+});
+
+test('open-invoice list by customerId returns every unpaid invoice, not only amount matches', () => {
+  const rows = [
+    ...sariBogaInvoices().map((inv) => ({
+      id: inv.invoiceId,
+      invoiceNo: inv.invoiceNo,
+      remaining: inv.remaining,
+      date: inv.date,
+      dueDate: inv.dueDate,
+      customerName: inv.customerName,
+      erpCustomerId: inv.customerId,
+    })),
+    {
+      id: 'other',
+      invoiceNo: 'INV-OTHER',
+      remaining: 480000,
+      date: '2026-09-21',
+      dueDate: '2026-09-29',
+      customerName: 'Toko Lain',
+      erpCustomerId: 'c-other',
+    },
+  ];
+  const forCustomer = selectOpenInvoices(rows, '', { customerId: 'c-sariboga' });
+  assert.deepEqual(forCustomer.map((row) => row.invoiceNo), [
+    'INV-076716', 'INV-077657', 'INV-079837', 'INV-079955', 'INV-080207', 'INV-081117', 'INV-082317',
+  ]);
+  // Same transfer amount appears on several invoices — all of them stay listed.
+  assert.equal(forCustomer.filter((row) => row.remaining === 480000).length, 5);
 });

@@ -101,6 +101,10 @@ export function remove(env) {
 
 export function openInvoices(env) {
   return asyncHandler(async (req, res) => {
-    res.json({ invoices: await listOpenInvoices(env, req.query.q || '') });
+    res.json({
+      invoices: await listOpenInvoices(env, req.query.q || '', {
+        customerId: req.query.customerId || '',
+      }),
+    });
   });
 }

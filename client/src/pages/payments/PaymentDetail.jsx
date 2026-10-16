@@ -190,34 +190,51 @@ export default function PaymentDetail() {
   }, [query, canReview, payment?.status, payment?.matchedInvoiceId]);
 
   const matchedCustomerId = payment?.matchedCustomerId || '';
-  const matchedCustomerName = payment?.invoice?.customer?.name || '';
   const allocationKey = (payment?.allocations || []).map((row) => row.invoiceId).join(',');
+  const candidateKey = (payment?.candidates || []).map((row) => row.invoiceId).join(',');
   const closed = ['approved', 'rejected'].includes(payment?.status);
 
-  // All unpaid invoices of the matched customer, oldest first, for the tick list.
+  // Seed the tick list from the matcher's full customer list immediately (not just
+  // the amount-matched allocations), then refresh from Zoho by customer id.
   useEffect(() => {
-    if (!canReview || closed || !matchedCustomerId || !matchedCustomerName) {
+    if (!canReview || closed || !matchedCustomerId) {
       setCustomerInvoices([]);
       return undefined;
     }
+    const seeded = (payment?.candidates || [])
+      .filter((row) => !row.customerId || String(row.customerId) === String(matchedCustomerId))
+      .map((row) => ({
+        id: row.invoiceId,
+        invoiceNo: row.invoiceNo,
+        date: row.date || null,
+        dueDate: row.dueDate || null,
+        remaining: row.remaining,
+        erpCustomerId: row.customerId || matchedCustomerId,
+        customerName: row.customerName || '',
+      }))
+      .sort(oldestFirst);
+    if (seeded.length) setCustomerInvoices(seeded);
+
     let cancelled = false;
     setLoadingInvoices(true);
-    fetchOpenInvoices(matchedCustomerName)
+    fetchOpenInvoices('', matchedCustomerId)
       .then((body) => {
         if (cancelled) return;
         const rows = (body.invoices || [])
-          .filter((row) => String(row.erpCustomerId) === String(matchedCustomerId))
+          .filter((row) => Number(row.remaining) > 0)
           .sort(oldestFirst);
-        setCustomerInvoices(rows);
+        // Prefer the live Zoho list; keep the seeded candidates if Zoho returned nothing.
+        if (rows.length) setCustomerInvoices(rows);
       })
       .catch(() => {
-        if (!cancelled) setCustomerInvoices([]);
+        // Keep seeded candidates so the accountant still sees every outstanding invoice.
       })
       .finally(() => {
         if (!cancelled) setLoadingInvoices(false);
       });
     return () => { cancelled = true; };
-  }, [canReview, closed, matchedCustomerId, matchedCustomerName]);
+    // candidateKey tracks when the matcher refreshes the full open-invoice list.
+  }, [canReview, closed, matchedCustomerId, candidateKey]);
 
   // Ticks follow the saved split whenever it changes on the server.
   useEffect(() => {
@@ -303,9 +320,20 @@ export default function PaymentDetail() {
   const adminFee = payment.ai?.adminFee || payment.bankFee || 0;
   const allocations = payment.allocations || [];
   const appliedById = new Map(allocations.map((row) => [String(row.invoiceId), row.applied]));
-  const pickRows = customerInvoices.length ? customerInvoices : allocations.map((row) => ({
-    id: row.invoiceId, invoiceNo: row.invoiceNo, date: row.date, remaining: row.remaining,
-  }));
+  // Prefer every unpaid invoice for the customer. Never drop to amount-only allocations
+  // while candidates (all open invoices from matching) are available.
+  const pickRows = customerInvoices.length
+    ? customerInvoices
+    : (payment.candidates || []).length
+      ? (payment.candidates || []).map((row) => ({
+        id: row.invoiceId,
+        invoiceNo: row.invoiceNo,
+        date: row.date,
+        remaining: row.remaining,
+      }))
+      : allocations.map((row) => ({
+        id: row.invoiceId, invoiceNo: row.invoiceNo, date: row.date, remaining: row.remaining,
+      }));
   const tickedTotal = pickRows
     .filter((row) => ticked.has(String(row.id)))
     .reduce((total, row) => total + row.remaining, 0);
