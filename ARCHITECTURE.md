@@ -20,6 +20,8 @@ ERP  <--(CSV file, by hand)--   Export (approved receipts)
 
 No arrow goes to or from the ERP automatically in Phase 1.
 
+Deliveries add an optional Cartrack Fleet API arrow (status and optional job create) behind `settings.cartrackEnabled`. Sheet upload/export stays in FinOps MongoDB and does not use the ERP kill switch.
+
 ## 2. Folder structure
 
 ```
@@ -121,7 +123,10 @@ All money fields are integer rupiah. All documents have `createdAt` and `updated
 - userId, action, entity, entityId, before, after, at
 
 **settings**
-- erpFeaturesEnabled (bool), confidenceThresholds: { warn, bad }, duplicateWindowDays
+- erpFeaturesEnabled (bool), cartrackEnabled (bool), confidenceThresholds: { warn, bad }, duplicateWindowDays
+
+**deliveryCustomers / areas / vehicles / drivers / products / deliveryDays / deliveryRoutes / deliveryStops**
+- Delivery operations models. Stops keep `ai` and `confirmed` separate for nota reading. Money is integer rupiah.
 
 ### Indexes
 
@@ -171,6 +176,12 @@ All routes require login except `/auth/login`. Role in brackets.
 
 **Admin**
 - `GET/POST/PATCH /admin/users`, `/admin/categories`, `/admin/settings` [admin]
+
+**Deliveries** [delivery, accountant, admin]
+- `POST /deliveries/import`, `POST /deliveries/import-history`
+- `GET /deliveries`, `GET /deliveries/:dayId`, routes/stops/status/location/message/export/report
+- `POST /deliveries/routes/:id/cartrack/send` and sync (blocked when `cartrackEnabled` is off)
+- `POST /deliveries/stops/:id/nota` (AI draft only until confirm)
 
 ## 5. Key flows
 

@@ -5,6 +5,7 @@ const LINKS = [
   ['/documents', 'Documents'],
   ['/payments', 'Payments'],
   ['/follow-up', 'Follow-up'],
+  ['/deliveries', 'Deliveries'],
 ];
 
 export default function Sidebar() {

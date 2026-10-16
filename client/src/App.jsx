@@ -8,6 +8,8 @@ import DocumentReview from './pages/documents/DocumentReview.jsx';
 import FollowUp from './pages/followUp/FollowUp.jsx';
 import Payments from './pages/payments/Payments.jsx';
 import PaymentDetail from './pages/payments/PaymentDetail.jsx';
+import DeliveryDays from './pages/deliveries/DeliveryDays.jsx';
+import DayDetail from './pages/deliveries/DayDetail.jsx';
 
 export default function App() {
   return (
@@ -20,6 +22,8 @@ export default function App() {
         <Route path="payments" element={<Payments />} />
         <Route path="payments/:id" element={<PaymentDetail />} />
         <Route path="follow-up" element={<FollowUp />} />
+        <Route path="deliveries" element={<DeliveryDays />} />
+        <Route path="deliveries/:dayId" element={<DayDetail />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

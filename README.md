@@ -41,6 +41,12 @@ Set `AI_PROVIDER`, `AI_API_KEY` and `AI_MODEL` in `.env`. The checked default mo
 
 A sample you can photograph or upload is generated with `node scripts/makeSampleImages.js` from `server/` after dependencies are installed. The pictures are invented. They are not measured accuracy scores.
 
+## Deliveries
+
+Open Deliveries at http://localhost:5173/deliveries. Upload the daily order `.xlsx` (List editing Driver) and optional historical LIST DRIVER workbooks. The app splits stops by area, builds Google Maps links without an API key, prepares WhatsApp messages for drivers, optionally creates Cartrack jobs when `cartrackEnabled` is on, and checks Nota Penjualan photos against the plan.
+
+Set `CARTRACK_USERNAME`, `CARTRACK_API_KEY`, and optional `DEPOT_LAT` / `DEPOT_LNG` in `.env`. Seed creates a `delivery@example.com` user with role `delivery`.
+
 ## Payment reconciliation
 
 Open Payments at http://localhost:5173/payments. Upload the WhatsApp bank screenshot. The model reads bank sender, amount, time and reference. On the detail page, paste the **caption customer name** (often different from the bank sender) and optional invoice #. Match is only a proposal. An accountant checks the bank statement, then **Record Payment** — Zoho `customerpayments.CREATE` under Payments Received, which marks the matched invoice paid or partially paid. Screenshot proof stays in FinOps (Zoho write is payment create only).

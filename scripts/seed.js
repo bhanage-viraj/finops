@@ -16,6 +16,7 @@ const testUsers = [
   { name: 'Sari Staff', email: 'staff@example.com', role: 'staff', envName: 'SEED_STAFF_PASSWORD' },
   { name: 'Budi Accountant', email: 'accountant@example.com', role: 'accountant', envName: 'SEED_ACCOUNTANT_PASSWORD' },
   { name: 'Agus Admin', email: 'admin@example.com', role: 'admin', envName: 'SEED_ADMIN_PASSWORD' },
+  { name: 'Dwi Delivery', email: 'delivery@example.com', role: 'delivery', envName: 'SEED_DELIVERY_PASSWORD' },
 ];
 
 function passwordFor(envName) {
@@ -64,6 +65,7 @@ async function seedSettings() {
   }
   const settings = await Setting.create({
     erpFeaturesEnabled: false,
+    cartrackEnabled: false,
     confidenceThresholds: { warn: 90, bad: 70 },
     duplicateWindowDays: 7,
   });
@@ -73,11 +75,12 @@ async function seedSettings() {
     entityId: settings._id,
     after: {
       erpFeaturesEnabled: false,
+      cartrackEnabled: false,
       confidenceThresholds: { warn: 90, bad: 70 },
       duplicateWindowDays: 7,
     },
   });
-  console.log('Settings created with erpFeaturesEnabled false.');
+  console.log('Settings created with erpFeaturesEnabled and cartrackEnabled false.');
 }
 
 async function seedCustomersAndInvoices() {

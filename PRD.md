@@ -26,10 +26,11 @@ FinOps is an internal web app that reduces manual accounting work for a water-di
 - Any live connection to, login to, or write access to the ERP.
 - Automatic posting, approval, payment marking or message sending.
 - A native phone app.
-- Driver sales collection and invoice entry (documented in the process map, planned later).
 - Accounts payable workflows beyond expense receipts.
 - Customer-facing screens.
 - Full financial reporting. The overview dashboard comes after the three workflows are stable.
+
+Driver delivery operations are covered in Workflow D below (sheet import, maps, Cartrack status, nota check). They still do not write to the ERP.
 
 ## 5. Users and roles
 
@@ -37,7 +38,8 @@ FinOps is an internal web app that reduces manual accounting work for a water-di
 |---|---|---|
 | Staff | Drivers, admin staff | Upload receipts and screenshots, confirm what the AI read |
 | Accountant | Finance/accounting | Approve or reject, verify payments, export, handle exceptions, send follow-ups |
-| Admin | Owner or manager | Manage users, categories, settings, the kill switch |
+| Delivery | Admin Delivery team | Import delivery sheets, fix locations, plan routes, WhatsApp maps, Cartrack sync, nota check |
+| Admin | Owner or manager | Manage users, categories, settings, the kill switches |
 
 ## 6. Workflow A: Expense receipts
 
@@ -101,17 +103,37 @@ Acceptance:
 - A collector agrees the ranked list matches their own judgement on most days.
 - Messages need only small edits.
 
-## 9. Rules that apply everywhere
+## 9. Workflow D: Deliveries
+
+**Story:** As Admin Delivery, I upload tomorrow's order sheet, get map links for every stop, split routes by area, send WhatsApp messages to drivers, track status from Cartrack, and check returned Notas against the plan.
+
+Requirements:
+
+- D1. Upload the daily order `.xlsx` and optional historical LIST DRIVER workbooks. Same date cannot be imported twice by accident.
+- D2. Resolve locations from the location book, GPS text, plus codes, and Maps links. Vague addresses need a pin once; then they are remembered on the customer.
+- D3. Build keyless Google Maps search and directions links for WhatsApp. Split long routes within the phone waypoint limit.
+- D4. Assign stops to areas from history, address keywords, then nearest centre. Uncertain stops stay Unassigned.
+- D5. Optional Cartrack job create and status poll behind `cartrackEnabled`. GPS may suggest Arrived; Delivered requires a person (Cartrack complete or admin).
+- D6. AI reads Nota Penjualan photos into `ai` (never overwritten). Person confirms into `confirmed`. Flag qty/price/product/returns/total/duplicate mismatches.
+- D7. Export an updated route workbook and a day report with 17:00 at-risk and new-customer lists.
+
+Acceptance:
+
+- On sample sheets, blank quantities are never treated as 0.
+- Vague addresses never get invented coordinates.
+- Delivered is never set from GPS alone.
+
+## 10. Rules that apply everywhere
 
 1. AI creates drafts and suggestions only.
 2. Nothing is approved, paid or exported without an accountant.
 3. No code in Phase 1 connects to the ERP.
-4. A kill switch (`erpFeaturesEnabled`) turns off imports and exports.
+4. A kill switch (`erpFeaturesEnabled`) turns off Zoho imports and exports. Cartrack writes use a separate `cartrackEnabled` switch.
 5. Every important action is written to the audit log.
 6. Money is stored as integer rupiah.
 7. Real customer data stays out of the code repository.
 
-## 10. Non-functional requirements
+## 11. Non-functional requirements
 
 - **Devices:** works on current phones and desktop browsers. Phone screens used for scanning, desktop for review.
 - **Speed:** upload shows progress. Screens stay usable on weak mobile signal.
@@ -120,7 +142,7 @@ Acceptance:
 - **Reliability:** automatic database and file backups. A restore is rehearsed before wider use.
 - **Language and formats:** Indonesian and English UI text as needed. Handle `Rp 1.200.000` and `09/10/2026` formats.
 
-## 11. Success measures
+## 12. Success measures
 
 To be set after the pilot. Starting targets:
 
@@ -129,14 +151,15 @@ To be set after the pilot. Starting targets:
 - Average handling time per receipt, payment and follow-up lower than the old method (measured in the pilot).
 - No duplicate entry reaches the ERP.
 
-## 12. Milestones
+## 13. Milestones
 
 - M0 Setup · M1 Login and layout · M2 Receipt upload · M3 AI reading · M4 Review and approval · M5 Receipt pilot
 - M6 Export screen · M7 Bank matching · M8 Collection follow-up · M9 Hardening
+- D1–D6 Deliveries (sheet import, locations, routes/WhatsApp, Cartrack, nota check, day close)
 
 Details are in the architecture plan document.
 
-## 13. Risks
+## 14. Risks
 
 | Risk | Handling |
 |---|---|
@@ -148,7 +171,7 @@ Details are in the architecture plan document.
 | Staff skip the app | Keep screens short and faster than the old way |
 | Privacy of customer data | Roles, limited access, provider terms review |
 
-## 14. Open questions
+## 15. Open questions
 
 1. Which ERP and version? Does it import files or offer an API? Is there a test company?
 2. Who builds it (in-house, freelancer, tool)?

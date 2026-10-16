@@ -92,7 +92,23 @@ export function readEnv(source = process.env) {
       redirectUri: source.ZOHO_REDIRECT_URI || 'http://localhost:4000/auth/zoho/callback',
       refreshToken: source.ZOHO_REFRESH_TOKEN || '',
     },
+    cartrack: {
+      baseUrl: source.CARTRACK_BASE_URL || 'https://fleetapi-id.cartrack.com/rest',
+      username: source.CARTRACK_USERNAME || '',
+      apiKey: source.CARTRACK_API_KEY || '',
+    },
+    deliveries: {
+      depotLat: optionalCoord(source.DEPOT_LAT, -8.6705),
+      depotLng: optionalCoord(source.DEPOT_LNG, 115.2126),
+    },
   };
+}
+
+function optionalCoord(value, fallback) {
+  if (value == null || String(value).trim() === '') return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return number;
 }
 
 function positiveInt(value, fallback) {

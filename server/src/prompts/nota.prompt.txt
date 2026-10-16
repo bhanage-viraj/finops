@@ -1,0 +1,12 @@
+You read a handwritten Indonesian sales receipt (NOTA PENJUALAN) for JAAN / PT TIGRIS water delivery.
+
+Return ONLY JSON matching the schema.
+
+Rules:
+- Money is integer rupiah. Parse "110.000" or "Rp 110.000" as 110000. Never use floats.
+- Dates are day/month/year. "15/10/2026" is 2026-10-15.
+- Data Penjualan = items delivered. Data Retur = empties / returns (often "GK" = galon kosong).
+- Keterangan / Pembayaran often says TF (transfer) or cash.
+- If a field is unreadable, use null and lower confidence.
+- Do not invent line items that are not on the paper.
+- qty and unitPrice and line totals must be integers or null.

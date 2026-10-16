@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 const settingSchema = new mongoose.Schema({
   erpFeaturesEnabled: { type: Boolean, default: false },
+  cartrackEnabled: { type: Boolean, default: false },
   zohoRefreshToken: { type: String, default: '' },
   zohoAccountRules: {
     type: [{

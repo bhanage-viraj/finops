@@ -29,6 +29,7 @@ async function ensureUsers() {
     { name: 'Sari Staff', email: 'staff@example.com', role: 'staff', envName: 'SEED_STAFF_PASSWORD' },
     { name: 'Budi Accountant', email: 'accountant@example.com', role: 'accountant', envName: 'SEED_ACCOUNTANT_PASSWORD' },
     { name: 'Agus Admin', email: 'admin@example.com', role: 'admin', envName: 'SEED_ADMIN_PASSWORD' },
+    { name: 'Dwi Delivery', email: 'delivery@example.com', role: 'delivery', envName: 'SEED_DELIVERY_PASSWORD' },
   ];
   for (const person of people) {
     const password = process.env[person.envName];
