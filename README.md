@@ -43,7 +43,7 @@ A sample you can photograph or upload is generated with `node scripts/makeSample
 
 ## Deliveries
 
-Open Deliveries at http://localhost:5173/deliveries. Upload the daily order `.xlsx` (List editing Driver) and optional historical LIST DRIVER workbooks. The app splits stops by area, builds Google Maps links without an API key, prepares WhatsApp messages for drivers, optionally creates Cartrack jobs when `cartrackEnabled` is on, and checks Nota Penjualan photos against the plan.
+Open Deliveries at http://localhost:5173/deliveries. Upload the daily order `.xlsx` (List editing Driver) and optional historical LIST DRIVER workbooks. The app splits stops by area, builds Google Maps links without an API key, prepares WhatsApp messages for drivers, reads Cartrack vehicles/GPS/job status (never creates or completes Cartrack jobs), and checks Nota Penjualan photos against the plan.
 
 Set `CARTRACK_USERNAME`, `CARTRACK_API_KEY`, and optional `DEPOT_LAT` / `DEPOT_LNG` in `.env`. Seed creates a `delivery@example.com` user with role `delivery`.
 

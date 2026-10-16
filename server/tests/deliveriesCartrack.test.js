@@ -38,14 +38,18 @@ test('cartrack client sends basic auth and parses JSON', async () => {
   assert.ok(calls[0].opts.headers.Authorization.startsWith('Basic '));
 });
 
-test('cartrack client maps HTTP errors without stack traces to client', async () => {
-  const fetchImpl = async () => ({
-    ok: false,
-    status: 403,
-    text: async () => JSON.stringify({ error: { message: 'Unauthorized for this role' } }),
-  });
+test('cartrack client hard-blocks writes even when credentials exist', async () => {
+  let called = false;
+  const fetchImpl = async () => {
+    called = true;
+    return { ok: true, status: 200, text: async () => '[]' };
+  };
   const client = createCartrackClient({
     cartrack: { username: 'u', apiKey: 'k' },
   }, { fetchImpl });
-  await assert.rejects(() => client.createJob({}), /Unauthorized/);
+  assert.equal(client.readOnly, true);
+  await assert.rejects(() => client.createJob({}), /read-only/i);
+  await assert.rejects(() => client.completeJob('1'), /read-only/i);
+  await assert.rejects(() => client._request('POST', '/delivery/jobs', { body: {} }), /read-only|GET/i);
+  assert.equal(called, false);
 });

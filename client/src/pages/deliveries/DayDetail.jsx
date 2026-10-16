@@ -17,7 +17,6 @@ import {
   dispatchDay,
   closeDay,
   downloadDayExport,
-  sendCartrackJobs,
   syncCartrack,
   uploadNota,
   confirmNota,
@@ -357,14 +356,6 @@ export default function DayDetail() {
                   }, 'Marked map sent.')}
                 >
                   Mark map sent
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={busy}
-                  onClick={() => run(() => sendCartrackJobs(selectedRoute._id), 'Jobs sent to Cartrack.')}
-                >
-                  Send to Cartrack
                 </button>
               </div>
 

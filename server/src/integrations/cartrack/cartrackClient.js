@@ -1,8 +1,16 @@
 import { httpError } from '../../utils/http.js';
 
+/** FinOps uses Cartrack as read-only. Never create/update/complete jobs remotely. */
+function refuseWrite() {
+  return Promise.reject(httpError(
+    403,
+    'Cartrack is read-only in FinOps. Job create and complete are disabled.',
+  ));
+}
+
 /**
  * Single Cartrack Fleet API caller for Indonesia.
- * Basic auth. Max ~60 calls/min for status endpoints.
+ * Basic auth. Read endpoints only — writes are hard-blocked in this client.
  */
 export function createCartrackClient(env, { fetchImpl = fetch } = {}) {
   const base = String(env.cartrack?.baseUrl || 'https://fleetapi-id.cartrack.com/rest').replace(/\/$/, '');
@@ -17,6 +25,10 @@ export function createCartrackClient(env, { fetchImpl = fetch } = {}) {
     if (!configured()) {
       throw httpError(503, 'Cartrack is not configured. Set CARTRACK_USERNAME and CARTRACK_API_KEY.');
     }
+    const upper = String(method || 'GET').toUpperCase();
+    if (upper !== 'GET' && upper !== 'HEAD') {
+      throw httpError(403, 'Cartrack is read-only in FinOps. Only GET requests are allowed.');
+    }
     const url = new URL(`${base}${path.startsWith('/') ? path : `/${path}`}`);
     if (query) {
       for (const [k, v] of Object.entries(query)) {
@@ -25,7 +37,7 @@ export function createCartrackClient(env, { fetchImpl = fetch } = {}) {
     }
     const auth = Buffer.from(`${username}:${apiKey}`).toString('base64');
     const res = await fetchImpl(url.toString(), {
-      method,
+      method: upper,
       headers: {
         Accept: 'application/json',
         Authorization: `Basic ${auth}`,
@@ -45,14 +57,15 @@ export function createCartrackClient(env, { fetchImpl = fetch } = {}) {
 
   return {
     configured,
+    readOnly: true,
     listVehicles: () => request('GET', '/vehicles'),
     vehiclesStatus: () => request('GET', '/vehicles/status'),
     listDeliveryDrivers: (query) => request('GET', '/delivery/drivers', { query }),
     listJobs: (query) => request('GET', '/delivery/jobs', { query }),
     getJob: (jobId) => request('GET', `/delivery/jobs/${jobId}`),
-    createJob: (body) => request('POST', '/delivery/jobs', { body }),
-    bulkUploadJobs: (body) => request('POST', '/delivery/jobs/bulk', { body }),
-    completeJob: (jobId) => request('PUT', `/delivery/jobs/${jobId}/complete`),
+    createJob: () => refuseWrite(),
+    bulkUploadJobs: () => refuseWrite(),
+    completeJob: () => refuseWrite(),
     // Test helper
     _request: request,
   };

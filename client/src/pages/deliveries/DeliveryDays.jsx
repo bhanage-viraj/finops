@@ -5,16 +5,11 @@ import {
   importDeliveryDay,
   importDeliveryHistory,
   deleteDeliveryDay,
-  setCartrackEnabled,
 } from '../../api/deliveries.js';
-import { useAuth } from '../../auth/AuthContext.jsx';
 import StatusBadge from '../../components/StatusBadge.jsx';
 
 export default function DeliveryDays() {
-  const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
   const [days, setDays] = useState([]);
-  const [cartrackEnabled, setCt] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -26,7 +21,6 @@ export default function DeliveryDays() {
     fetchDeliveryDays()
       .then((body) => {
         setDays(body.days || []);
-        setCt(Boolean(body.cartrackEnabled));
       })
       .catch((err) => setError(err.message));
   }
@@ -82,19 +76,6 @@ export default function DeliveryDays() {
     }
   }
 
-  async function toggleCartrack() {
-    if (!isAdmin) return;
-    setBusy(true);
-    try {
-      const body = await setCartrackEnabled(!cartrackEnabled);
-      setCt(Boolean(body.cartrackEnabled));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="page">
       <header className="page-header">
@@ -133,14 +114,9 @@ export default function DeliveryDays() {
 
       <section className="card">
         <h2>Cartrack</h2>
-        <p className={cartrackEnabled ? 'message message-ok' : 'message message-warn'}>
-          {cartrackEnabled ? 'Cartrack writes are on.' : 'Cartrack writes are off.'}
+        <p className="message message-ok">
+          Read-only: vehicles, GPS suggestions and job status sync. FinOps never creates or completes Cartrack jobs.
         </p>
-        {isAdmin && (
-          <button type="button" className="btn btn-secondary" disabled={busy} onClick={toggleCartrack}>
-            {cartrackEnabled ? 'Turn Cartrack off' : 'Turn Cartrack on'}
-          </button>
-        )}
       </section>
 
       <section className="card">

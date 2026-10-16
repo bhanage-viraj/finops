@@ -113,7 +113,7 @@ Requirements:
 - D2. Resolve locations from the location book, GPS text, plus codes, and Maps links. Vague addresses need a pin once; then they are remembered on the customer.
 - D3. Build keyless Google Maps search and directions links for WhatsApp. Split long routes within the phone waypoint limit.
 - D4. Assign stops to areas from history, address keywords, then nearest centre. Uncertain stops stay Unassigned.
-- D5. Optional Cartrack job create and status poll behind `cartrackEnabled`. GPS may suggest Arrived; Delivered requires a person (Cartrack complete or admin).
+- D5. Cartrack is read-only: vehicle list, GPS arrival suggestions, and job status sync. FinOps never creates or completes Cartrack jobs. Delivered requires a person in FinOps.
 - D6. AI reads Nota Penjualan photos into `ai` (never overwritten). Person confirms into `confirmed`. Flag qty/price/product/returns/total/duplicate mismatches.
 - D7. Export an updated route workbook and a day report with 17:00 at-risk and new-customer lists.
 
@@ -128,7 +128,7 @@ Acceptance:
 1. AI creates drafts and suggestions only.
 2. Nothing is approved, paid or exported without an accountant.
 3. No code in Phase 1 connects to the ERP.
-4. A kill switch (`erpFeaturesEnabled`) turns off Zoho imports and exports. Cartrack writes use a separate `cartrackEnabled` switch.
+4. A kill switch (`erpFeaturesEnabled`) turns off Zoho imports and exports. Cartrack integration is read-only in code (no remote job create/complete).
 5. Every important action is written to the audit log.
 6. Money is stored as integer rupiah.
 7. Real customer data stays out of the code repository.

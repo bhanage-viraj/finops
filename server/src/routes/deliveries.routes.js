@@ -48,7 +48,8 @@ export function createDeliveriesRouter(env) {
 
   router.post('/import', ops, upload, importDay(env));
   router.post('/import-history', ops, upload, importHistory());
-  router.post('/cartrack/link-vehicles', admin, cartrackKillSwitch, linkVehicles(env));
+  // Read-only Cartrack: link ids + status sync. Job create stays blocked in the client.
+  router.post('/cartrack/link-vehicles', admin, linkVehicles(env));
 
   router.get('/:dayId', ops, detail());
   router.delete('/:dayId', ops, removeDay(env));
@@ -58,7 +59,7 @@ export function createDeliveriesRouter(env) {
   router.get('/:dayId/export', ops, exportXlsx());
   router.post('/:dayId/dispatch', ops, dispatch());
   router.post('/:dayId/close', ops, close());
-  router.post('/:dayId/cartrack/sync', ops, cartrackKillSwitch, syncCartrack(env));
+  router.post('/:dayId/cartrack/sync', ops, syncCartrack(env));
   router.get('/:dayId/cartrack/gps-suggestions', ops, gpsSuggestions(env));
 
   router.patch('/stops/:stopId/location', ops, setLocation());
@@ -72,6 +73,7 @@ export function createDeliveriesRouter(env) {
   router.get('/routes/:routeId/message', ops, routeMessage(env));
   router.post('/routes/:routeId/map-sent', ops, mapSent());
   router.post('/routes/:routeId/reorder', ops, reorder(env));
+  // Kept for old clients; always returns 403 (Cartrack read-only).
   router.post('/routes/:routeId/cartrack/send', ops, cartrackKillSwitch, sendCartrack(env));
   router.get('/routes/:routeId/empties', ops, empties());
 
