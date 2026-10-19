@@ -101,6 +101,23 @@ export function summaryFileName(customers, customerQuery) {
   return 'Receivable-Summary.pdf';
 }
 
+/** Accountant-chosen download name. Path characters are stripped so it cannot leave the download. */
+export function sanitizeSummaryFileName(raw, fallback = 'Receivable-Summary.pdf') {
+  const withoutExt = String(raw || '').replace(/\.pdf$/i, '');
+  const slug = withoutExt
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/[^A-Za-z0-9._ -]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/-+/g, '-')
+    .trim()
+    .replace(/^[-. ]+|[-. ]+$/g, '')
+    .slice(0, 80);
+  const base = slug || String(fallback || '').replace(/\.pdf$/i, '').slice(0, 80) || 'Receivable-Summary';
+  return /\.pdf$/i.test(base) ? base : `${base}.pdf`;
+}
+
 /** Same money text as the Zoho receivable summary: IDR765,000.00 */
 function formatIdr(amount) {
   if (!Number.isInteger(amount)) return '';
@@ -258,27 +275,35 @@ export async function receivableSummaryPdf(user, env, query = {}, deps = {}) {
   const bytes = await renderReceivableSummaryPdf({ ...summary, from, to, asOf });
   const phone = summary.customers.length === 1 ? (summary.customers[0].customerPhone || '') : '';
   const customerName = summary.customers.length === 1 ? summary.customers[0].customerName : '';
-  const audit = deps.writeAudit || writeAudit;
-  await audit({
-    userId: user.id,
-    action: 'followUp.receivableSummary',
-    entity: 'followUp',
-    after: {
-      fromDate: from,
-      toDate: to,
-      customer,
-      invoiceCount: summary.invoiceCount,
-      customerCount: summary.customers.length,
-      total: summary.grandTotal,
-    },
-  });
+  const defaultName = summaryFileName(summary.customers, customer);
+  const fileName = sanitizeSummaryFileName(query.fileName, defaultName);
+  const preview = query.preview === '1' || query.preview === true;
+  if (!preview) {
+    const audit = deps.writeAudit || writeAudit;
+    await audit({
+      userId: user.id,
+      action: 'followUp.receivableSummary',
+      entity: 'followUp',
+      after: {
+        fromDate: from,
+        toDate: to,
+        customer,
+        fileName,
+        invoiceCount: summary.invoiceCount,
+        customerCount: summary.customers.length,
+        total: summary.grandTotal,
+      },
+    });
+  }
   return {
     bytes,
-    fileName: summaryFileName(summary.customers, customer),
+    fileName,
     contentType: 'application/pdf',
     customerCount: summary.customers.length,
+    invoiceCount: summary.invoiceCount,
     total: summary.grandTotal,
     phone,
     customerName,
+    preview,
   };
 }

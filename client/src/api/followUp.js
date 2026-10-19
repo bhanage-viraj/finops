@@ -13,9 +13,11 @@ export function fetchFollowUpInvoicePdf(invoiceId) {
   return apiFile(`/follow-up/invoices/${encodeURIComponent(invoiceId)}/pdf`);
 }
 
-export async function fetchReceivableSummaryPdf({ from, to, customer }) {
+export async function fetchReceivableSummaryPdf({ from, to, customer, fileName, preview }) {
   const query = new URLSearchParams({ from, to });
   if (String(customer || '').trim()) query.set('customer', String(customer).trim());
+  if (String(fileName || '').trim()) query.set('fileName', String(fileName).trim());
+  if (preview) query.set('preview', '1');
   const token = getToken();
   const response = await fetch(`/follow-up/receivable-summary.pdf?${query}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -44,6 +46,7 @@ export async function fetchReceivableSummaryPdf({ from, to, customer }) {
     blob: await response.blob(),
     fileName: match?.[1] || 'Receivable-Summary.pdf',
     customerCount: Number(response.headers.get('x-summary-customers') || 0),
+    invoiceCount: Number(response.headers.get('x-summary-invoices') || 0),
     total: Number.isInteger(total) ? total : 0,
     phone: response.headers.get('x-summary-phone') || '',
     customerName,

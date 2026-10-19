@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  buildReceivableSummary, receivableSummaryPdf, renderReceivableSummaryPdf, summaryFileName,
+  buildReceivableSummary, receivableSummaryPdf, renderReceivableSummaryPdf, sanitizeSummaryFileName,
+  summaryFileName,
 } from '../src/services/followUp/receivableSummaryPdf.js';
 
 const range = { from: '2026-10-01', to: '2026-10-31' };
@@ -52,6 +53,45 @@ test('a customer name keeps only that customer', () => {
   assert.equal(summary.grandTotal, 480000);
   assert.equal(summaryFileName(summary.customers, 'coppenhagen'), 'Receivable-Summary-Alit-Coppenhagen.pdf');
   assert.equal(summaryFileName(summary.customers, ''), 'Receivable-Summary.pdf');
+});
+
+test('a chosen file name is cleaned and a preview does not write an audit entry', async () => {
+  assert.equal(sanitizeSummaryFileName('OMNI Gym Oct 2026'), 'OMNI Gym Oct 2026.pdf');
+  assert.equal(sanitizeSummaryFileName('../secret.pdf'), 'secret.pdf');
+  assert.equal(sanitizeSummaryFileName('   '), 'Receivable-Summary.pdf');
+  const audits = [];
+  const preview = await receivableSummaryPdf(
+    { role: 'admin', id: 'user-1' },
+    env,
+    { ...range, customer: 'alpha', fileName: 'Toko Alpha Oct', preview: '1' },
+    {
+      loadSettings: enabled,
+      writeAudit: async (entry) => { audits.push(entry); },
+      listUnpaidInvoicesInRange: async () => ({
+        truncated: false,
+        invoices: [invoice({ balance: 1200000 })],
+      }),
+    },
+  );
+  assert.equal(preview.fileName, 'Toko Alpha Oct.pdf');
+  assert.equal(preview.preview, true);
+  assert.equal(audits.length, 0);
+  const downloaded = await receivableSummaryPdf(
+    { role: 'admin', id: 'user-1' },
+    env,
+    { ...range, customer: 'alpha', fileName: 'Toko Alpha Oct' },
+    {
+      loadSettings: enabled,
+      writeAudit: async (entry) => { audits.push(entry); },
+      listUnpaidInvoicesInRange: async () => ({
+        truncated: false,
+        invoices: [invoice({ balance: 1200000 })],
+      }),
+    },
+  );
+  assert.equal(downloaded.fileName, 'Toko Alpha Oct.pdf');
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].after.fileName, 'Toko Alpha Oct.pdf');
 });
 
 function pdfWords(bytes) {

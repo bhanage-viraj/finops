@@ -675,6 +675,17 @@ label.btn.is-disabled {
 .followup-summary h2 { margin: 0 0 var(--space-2); font-size: var(--text-section); }
 .followup-summary .hint { margin: 0; }
 .followup-summary .filters { margin-bottom: 0; align-items: end; }
+.followup-summary-name { min-width: 12rem; flex: 1 1 12rem; }
+.followup-summary-preview { margin-top: var(--space-3); }
+.followup-summary-frame {
+  max-height: 420px;
+}
+.followup-summary-frame iframe {
+  min-height: 320px;
+  height: 420px;
+  width: 100%;
+  border: 0;
+}
 .followup-count-row { justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
 .followup-count-row .hint { margin: 0; }
 .followup-pager {
@@ -806,6 +817,8 @@ label.btn.is-disabled {
   .payment-steps { grid-template-columns: 1fr; }
   .followup-preview-frame { max-height: 220px; }
   .followup-preview-frame iframe { min-height: 180px; height: 220px; }
+  .followup-summary-frame { max-height: 280px; }
+  .followup-summary-frame iframe { min-height: 220px; height: 280px; }
   .followup-preview-head .btn,
   .followup-panel-head .btn,
   .followup-combined-list .btn { width: auto; }

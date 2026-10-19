@@ -31,14 +31,18 @@ export function invoicePdf(env) {
 
 export function receivableSummary(env) {
   return asyncHandler(async (req, res) => {
+    const preview = req.query.preview === '1';
     const file = await receivableSummaryPdf(req.user, env, {
       from: String(req.query.from || ''),
       to: String(req.query.to || ''),
       customer: String(req.query.customer || ''),
+      fileName: String(req.query.fileName || ''),
+      preview,
     });
     res.set('Content-Type', file.contentType || 'application/pdf');
-    res.set('Content-Disposition', `attachment; filename="${file.fileName || 'Receivable-Summary.pdf'}"`);
+    res.set('Content-Disposition', `${preview ? 'inline' : 'attachment'}; filename="${file.fileName || 'Receivable-Summary.pdf'}"`);
     res.set('X-Summary-Customers', String(file.customerCount));
+    res.set('X-Summary-Invoices', String(file.invoiceCount || 0));
     res.set('X-Summary-Total', String(file.total));
     res.set('X-Summary-Phone', file.phone || '');
     res.set('X-Summary-Name', encodeURIComponent(file.customerName || ''));

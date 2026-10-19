@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchReceivableSummaryPdf } from '../../api/followUp.js';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 
@@ -39,7 +39,20 @@ function summaryMessage(total, from, to) {
 }
 
 function noteIsBad(note) {
-  return /failed|could not|more than one|no outstanding/i.test(note || '');
+  return /failed|could not|more than one|no outstanding|choose a start/i.test(note || '');
+}
+
+function downloadName(value, fallback) {
+  const slug = String(value || fallback || 'Receivable-Summary')
+    .replace(/\.pdf$/i, '')
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .trim()
+    .slice(0, 80) || 'Receivable-Summary';
+  return /\.pdf$/i.test(slug) ? slug : `${slug}.pdf`;
+}
+
+function rangeKey(range, customer) {
+  return `${range.from}|${range.to}|${String(customer || '').trim().toLowerCase()}`;
 }
 
 /** Added beside the reminder list. Does not read or change that list. */
@@ -48,36 +61,108 @@ export default function ReceivableSummary() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [customer, setCustomer] = useState('');
+  const [fileName, setFileName] = useState('');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [previewMeta, setPreviewMeta] = useState(null);
+  const previewUrlRef = useRef('');
+  const previewFileRef = useRef(null);
+  const previewKeyRef = useRef('');
 
-  function triggerDownload(blob, fileName) {
+  useEffect(() => () => {
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+  }, []);
+
+  function currentRange() {
+    return mode === 'month' ? monthBounds() : { from, to };
+  }
+
+  function validateRange(range) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(range.from) || !/^\d{4}-\d{2}-\d{2}$/.test(range.to)) {
+      return 'Choose a start and end date.';
+    }
+    if (range.from > range.to) return 'The start date must be on or before the end date.';
+    return '';
+  }
+
+  function triggerDownload(blob, name) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = fileName;
+    link.download = name;
     link.click();
     URL.revokeObjectURL(url);
   }
 
-  async function run(send) {
-    setNote('');
-    const range = mode === 'month' ? monthBounds() : { from, to };
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(range.from) || !/^\d{4}-\d{2}-\d{2}$/.test(range.to)) {
-      setNote('Choose a start and end date.');
-      return;
+  function showPreview(file) {
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    const url = URL.createObjectURL(file.blob);
+    previewUrlRef.current = url;
+    previewFileRef.current = file;
+    setPreviewUrl(url);
+    setPreviewMeta({
+      invoiceCount: file.invoiceCount,
+      customerCount: file.customerCount,
+      total: file.total,
+    });
+    if (!String(fileName || '').trim() && file.fileName) {
+      setFileName(String(file.fileName).replace(/\.pdf$/i, ''));
     }
-    if (range.from > range.to) {
-      setNote('The start date must be on or before the end date.');
+  }
+
+  async function loadPdf(range, { preview }) {
+    return fetchReceivableSummaryPdf({
+      ...range,
+      customer,
+      fileName,
+      preview,
+    });
+  }
+
+  async function onPreview() {
+    setNote('');
+    const range = currentRange();
+    const error = validateRange(range);
+    if (error) {
+      setNote(error);
       return;
     }
     setBusy(true);
     try {
-      const file = await fetchReceivableSummaryPdf({ ...range, customer });
-      const pdf = new File([file.blob], file.fileName, { type: 'application/pdf' });
-      triggerDownload(pdf, pdf.name);
+      const file = await loadPdf(range, { preview: true });
+      previewKeyRef.current = rangeKey(range, customer);
+      showPreview(file);
+      const invoices = file.invoiceCount || 0;
+      const customers = file.customerCount || 0;
+      setNote(invoices
+        ? `Preview ready. ${invoices.toLocaleString('id-ID')} invoice${invoices === 1 ? '' : 's'} · ${customers.toLocaleString('id-ID')} customer${customers === 1 ? '' : 's'}.`
+        : 'Preview ready. No outstanding invoices in this range.');
+    } catch (err) {
+      setNote(err.message || 'The summary could not be previewed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function run(send) {
+    setNote('');
+    const range = currentRange();
+    const error = validateRange(range);
+    if (error) {
+      setNote(error);
+      return;
+    }
+    setBusy(true);
+    try {
+      const file = await loadPdf(range, { preview: false });
+      previewKeyRef.current = rangeKey(range, customer);
+      showPreview(file);
+      const name = downloadName(fileName, file.fileName);
+      const pdf = new File([file.blob], name, { type: 'application/pdf' });
+      triggerDownload(pdf, name);
       if (!send) {
-        setNote('Receivable summary downloaded.');
+        setNote(`Receivable summary downloaded as ${name}.`);
         return;
       }
       if (file.customerCount !== 1) {
@@ -87,7 +172,7 @@ export default function ReceivableSummary() {
         return;
       }
       window.open(whatsappUrl(file.phone, summaryMessage(file.total, range.from, range.to)), '_blank', 'noopener,noreferrer');
-      setNote('PDF downloaded. Attach that file in WhatsApp Web after the chat opens.');
+      setNote(`PDF downloaded as ${name}. Attach that file in WhatsApp Web after the chat opens.`);
     } catch (err) {
       setNote(err.message || 'The summary could not be downloaded.');
     } finally {
@@ -99,7 +184,8 @@ export default function ReceivableSummary() {
     <section className="card followup-summary">
       <h2>Receivable summary</h2>
       <p className="hint">
-        Separate from the reminder list. One PDF of unpaid invoices, with the same columns as the Zoho receivable summary. Credit notes are not included.
+        Separate from the reminder list. Preview the unpaid-invoice PDF, name the file, then download.
+        Credit notes are not included.
       </p>
       <div className="filters">
         <label className="filter-field">
@@ -130,6 +216,19 @@ export default function ReceivableSummary() {
             onChange={(event) => setCustomer(event.target.value)}
           />
         </label>
+        <label className="filter-field followup-summary-name">
+          <span className="field-label">File name</span>
+          <input
+            aria-label="Receivable summary file name"
+            placeholder="Receivable-Summary"
+            value={fileName}
+            onChange={(event) => setFileName(event.target.value)}
+            autoComplete="off"
+          />
+        </label>
+        <button type="button" className="btn btn-secondary" disabled={busy} onClick={onPreview}>
+          {busy ? 'Loading…' : 'Preview'}
+        </button>
         <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => run(false)}>
           Download PDF
         </button>
@@ -142,6 +241,25 @@ export default function ReceivableSummary() {
           Send on WhatsApp
         </button>
       </div>
+      {previewUrl && (
+        <div className="followup-preview followup-summary-preview">
+          <div className="title-row followup-preview-head">
+            <p className="hint">
+              {previewMeta?.invoiceCount
+                ? `${previewMeta.invoiceCount.toLocaleString('id-ID')} invoice${previewMeta.invoiceCount === 1 ? '' : 's'} · ${formatRupiah(previewMeta.total)}`
+                : 'PDF preview'}
+            </p>
+            <a className="btn btn-secondary" href={previewUrl} target="_blank" rel="noreferrer">
+              Open preview
+            </a>
+          </div>
+          <div className="viewer-scroll followup-preview-frame followup-summary-frame">
+            <div className="viewer-stage">
+              <iframe title="Receivable summary preview" src={`${previewUrl}#view=FitH`} />
+            </div>
+          </div>
+        </div>
+      )}
       {note && <p className={noteIsBad(note) ? 'message message-bad' : 'hint'}>{note}</p>}
     </section>
   );
