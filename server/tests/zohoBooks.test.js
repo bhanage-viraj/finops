@@ -3,9 +3,9 @@ import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
   assertAllowedUrl, authorizationUrl, clearZohoTokenCache, createCustomerPayment, createExpense,
-  createOauthState, exchangeAuthCode, getInvoicePdf, listInvoicePages, listOverdueInvoices, listUnpaidInvoicesInRange,
-  mapOverdueInvoice, mapReceivableInvoice, mapStoredInvoice, mapUnpaidInvoiceForMatching, missingZohoConfig,
-  parseInvoiceListBody, receiptExtension, verifyOauthState, zohoTimeMs, zohoTimeParam,
+  createOauthState, exchangeAuthCode, getInvoicePdf, invoiceQtyAndDelivery, listInvoicePages, listOverdueInvoices,
+  listUnpaidInvoicesInRange, mapOverdueInvoice, mapReceivableInvoice, mapStoredInvoice, mapUnpaidInvoiceForMatching,
+  missingZohoConfig, parseInvoiceListBody, receiptExtension, verifyOauthState, zohoTimeMs, zohoTimeParam,
   ZOHO_CUSTOMER_PAYMENT_SCOPE, ZOHO_OAUTH_SCOPE,
 } from '../src/integrations/erp/zohoBooks.js';
 import { receiptForZoho } from '../src/services/documents/zohoExpense.js';
@@ -53,10 +53,10 @@ test('Zoho URLs allow expense, invoice list/PDF, and customer payment POST', () 
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices?status=overdue', 'in', 'GET'));
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices?last_modified_time=2026-10-19T02:00:00%2B0000&customer_id=1', 'in', 'GET'));
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1&accept=pdf', 'in', 'GET'));
+  assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1', 'in', 'GET'));
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/customerpayments', 'in', 'POST'));
-  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1', 'in', 'GET'), /customer payment|invoice PDF/);
-  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices', 'in', 'POST'), /customer payment|invoice PDF/);
-  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/bills', 'in', 'GET'), /customer payment|invoice PDF/);
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices', 'in', 'POST'), /customer payment|invoice/);
+  assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/bills', 'in', 'GET'), /customer payment|invoice/);
 });
 
 test('unpaid invoice mapper keeps customer id and balance for matching', () => {
@@ -195,6 +195,25 @@ test('receivable invoice mapper keeps the date, phone and integer balance', () =
     invoice_id: '1', customer_id: '2', invoice_number: 'X', customer_name: 'A',
     date: '2026-10-02', status: 'sent', balance: 1000, currency_code: 'USD',
   }), null);
+  const paid = mapReceivableInvoice({
+    invoice_id: '1', customer_id: '2', invoice_number: 'INV-PAID', customer_name: 'A',
+    date: '2026-10-02', status: 'paid', balance: 0, total: 50000, currency_code: 'IDR',
+  }, { allowStatuses: new Set(['paid']) });
+  assert.equal(paid.invoiceTotal, 50000);
+  assert.equal(paid.balance, 0);
+});
+
+test('quantity skips delivery lines and delivery fee is integer rupiah', () => {
+  const extras = invoiceQtyAndDelivery({
+    shipping_charge: 15000,
+    line_items: [
+      { name: 'STILL 330', quantity: 12, item_total: 144000 },
+      { name: 'Delivery Fee', quantity: 1, item_total: 20000 },
+      { description: 'Ongkir', quantity: 1, item_total: 5000 },
+    ],
+  });
+  assert.equal(extras.quantity, 12);
+  assert.equal(extras.deliveryFee, 40000);
 });
 
 test('receivable summary lists unpaid invoices on the existing invoices URL', async () => {

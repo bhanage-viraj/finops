@@ -13,10 +13,18 @@ export function fetchFollowUpInvoicePdf(invoiceId) {
   return apiFile(`/follow-up/invoices/${encodeURIComponent(invoiceId)}/pdf`);
 }
 
-export async function fetchReceivableSummaryPdf({ from, to, customer, fileName, preview }) {
+export function fetchFollowUpCustomers(q) {
+  const query = new URLSearchParams();
+  if (String(q || '').trim()) query.set('q', String(q).trim());
+  const text = query.toString();
+  return api(`/follow-up/customers${text ? `?${text}` : ''}`);
+}
+
+export async function fetchReceivableSummaryPdf({ from, to, customer, fileName, preview, status }) {
   const query = new URLSearchParams({ from, to });
   if (String(customer || '').trim()) query.set('customer', String(customer).trim());
   if (String(fileName || '').trim()) query.set('fileName', String(fileName).trim());
+  if (String(status || '').trim()) query.set('status', String(status).trim());
   if (preview) query.set('preview', '1');
   const token = getToken();
   const response = await fetch(`/follow-up/receivable-summary.pdf?${query}`, {

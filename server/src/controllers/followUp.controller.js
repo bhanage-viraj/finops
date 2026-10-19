@@ -1,3 +1,4 @@
+import { suggestCustomers } from '../services/followUp/customerSuggest.js';
 import { followUpInvoicePdf } from '../services/followUp/invoicePdf.js';
 import { receivableSummaryPdf } from '../services/followUp/receivableSummaryPdf.js';
 import { todayFollowUp } from '../services/followUp/today.js';
@@ -29,6 +30,12 @@ export function invoicePdf(env) {
   });
 }
 
+export function customers(env) {
+  return asyncHandler(async (req, res) => {
+    res.json(await suggestCustomers(req.user, env, String(req.query.q || '')));
+  });
+}
+
 export function receivableSummary(env) {
   return asyncHandler(async (req, res) => {
     const preview = req.query.preview === '1';
@@ -37,6 +44,7 @@ export function receivableSummary(env) {
       to: String(req.query.to || ''),
       customer: String(req.query.customer || ''),
       fileName: String(req.query.fileName || ''),
+      status: String(req.query.status || ''),
       preview,
     });
     res.set('Content-Type', file.contentType || 'application/pdf');

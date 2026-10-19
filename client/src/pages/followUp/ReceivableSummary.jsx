@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchReceivableSummaryPdf } from '../../api/followUp.js';
+import { fetchFollowUpCustomers, fetchReceivableSummaryPdf } from '../../api/followUp.js';
 import { formatRupiah } from '../../utils/formatRupiah.js';
+
+const STATUS_OPTIONS = [
+  { id: 'overdue', label: 'Overdue' },
+  { id: 'paid', label: 'Paid' },
+  { id: 'draft', label: 'Draft' },
+];
 
 function displayDate(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return iso || '—';
@@ -51,8 +57,8 @@ function downloadName(value, fallback) {
   return /\.pdf$/i.test(slug) ? slug : `${slug}.pdf`;
 }
 
-function rangeKey(range, customer) {
-  return `${range.from}|${range.to}|${String(customer || '').trim().toLowerCase()}`;
+function rangeKey(range, customer, statuses) {
+  return `${range.from}|${range.to}|${String(customer || '').trim().toLowerCase()}|${(statuses || []).join(',')}`;
 }
 
 /** Added beside the reminder list. Does not read or change that list. */
@@ -62,17 +68,55 @@ export default function ReceivableSummary() {
   const [to, setTo] = useState('');
   const [customer, setCustomer] = useState('');
   const [fileName, setFileName] = useState('');
+  const [statuses, setStatuses] = useState(['overdue']);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [previewMeta, setPreviewMeta] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const previewUrlRef = useRef('');
   const previewFileRef = useRef(null);
   const previewKeyRef = useRef('');
+  const suggestSeq = useRef(0);
 
   useEffect(() => () => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
   }, []);
+
+  useEffect(() => {
+    const needle = customer.trim();
+    if (!showSuggestions || needle.length < 1) {
+      setSuggestions([]);
+      setSuggesting(false);
+      return undefined;
+    }
+    const seq = ++suggestSeq.current;
+    setSuggesting(true);
+    const timer = setTimeout(() => {
+      fetchFollowUpCustomers(needle)
+        .then((data) => {
+          if (seq !== suggestSeq.current) return;
+          setSuggestions(data.customers || []);
+        })
+        .catch(() => {
+          if (seq !== suggestSeq.current) return;
+          setSuggestions([]);
+        })
+        .finally(() => {
+          if (seq === suggestSeq.current) setSuggesting(false);
+        });
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [customer, showSuggestions]);
+
+  function toggleStatus(id) {
+    setStatuses((prev) => {
+      const next = prev.includes(id) ? prev.filter((status) => status !== id) : [...prev, id];
+      return next.length ? next : ['overdue'];
+    });
+  }
 
   function currentRange() {
     return mode === 'month' ? monthBounds() : { from, to };
@@ -116,6 +160,7 @@ export default function ReceivableSummary() {
       ...range,
       customer,
       fileName,
+      status: statuses.join(','),
       preview,
     });
   }
@@ -131,7 +176,7 @@ export default function ReceivableSummary() {
     setBusy(true);
     try {
       const file = await loadPdf(range, { preview: true });
-      previewKeyRef.current = rangeKey(range, customer);
+      previewKeyRef.current = rangeKey(range, customer, statuses);
       showPreview(file);
       const invoices = file.invoiceCount || 0;
       const customers = file.customerCount || 0;
@@ -156,7 +201,7 @@ export default function ReceivableSummary() {
     setBusy(true);
     try {
       const file = await loadPdf(range, { preview: false });
-      previewKeyRef.current = rangeKey(range, customer);
+      previewKeyRef.current = rangeKey(range, customer, statuses);
       showPreview(file);
       const name = downloadName(fileName, file.fileName);
       const pdf = new File([file.blob], name, { type: 'application/pdf' });
@@ -184,9 +229,22 @@ export default function ReceivableSummary() {
     <section className="card followup-summary">
       <h2>Receivable summary</h2>
       <p className="hint">
-        Separate from the reminder list. Preview the unpaid-invoice PDF, name the file, then download.
-        Credit notes are not included.
+        Separate from the reminder list. Filter by status, pick a customer, preview, then download.
+        Quantity and delivery fee fill in when you select a customer. Credit notes are not included.
       </p>
+      <div className="chips followup-summary-statuses" role="group" aria-label="Invoice status">
+        {STATUS_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={statuses.includes(option.id) ? 'chip chip-active' : 'chip'}
+            aria-pressed={statuses.includes(option.id)}
+            onClick={() => toggleStatus(option.id)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       <div className="filters">
         <label className="filter-field">
           <span className="field-label">Date range</span>
@@ -207,14 +265,44 @@ export default function ReceivableSummary() {
             </label>
           </>
         )}
-        <label className="filter-field">
+        <label className="filter-field followup-summary-customer">
           <span className="field-label">Customer</span>
-          <input
-            aria-label="Customer for the summary"
-            placeholder="Optional. Needed to send"
-            value={customer}
-            onChange={(event) => setCustomer(event.target.value)}
-          />
+          <div className="name-suggest">
+            <input
+              aria-label="Customer for the summary"
+              placeholder="Type a name"
+              value={customer}
+              onChange={(event) => {
+                setCustomer(event.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+              autoComplete="off"
+            />
+            {showSuggestions && customer.trim() && (
+              <ul className="name-suggest-list" role="listbox">
+                {suggesting && <li><p className="hint">Searching…</p></li>}
+                {!suggesting && suggestions.length === 0 && (
+                  <li><p className="hint">No matching customer</p></li>
+                )}
+                {suggestions.map((row) => (
+                  <li key={row.customerId || row.customerName}>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setCustomer(row.customerName);
+                        setShowSuggestions(false);
+                      }}
+                    >
+                      <strong>{row.customerName}</strong>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </label>
         <label className="filter-field followup-summary-name">
           <span className="field-label">File name</span>

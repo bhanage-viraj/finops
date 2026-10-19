@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  buildReceivableSummary, receivableSummaryPdf, renderReceivableSummaryPdf, sanitizeSummaryFileName,
-  summaryFileName,
+  buildReceivableSummary, parseSummaryStatuses, receivableSummaryPdf, renderReceivableSummaryPdf,
+  sanitizeSummaryFileName, summaryFileName,
 } from '../src/services/followUp/receivableSummaryPdf.js';
+import { suggestCustomers } from '../src/services/followUp/customerSuggest.js';
 
 const range = { from: '2026-10-01', to: '2026-10-31' };
 
@@ -205,5 +206,97 @@ test('a truncated Zoho list is refused so the total cannot be short', async () =
       },
     ),
     /Narrow the date range/,
+  );
+});
+
+test('paid, draft and overdue filters keep the matching invoices', () => {
+  assert.deepEqual(parseSummaryStatuses('paid, overdue, secret'), ['paid', 'overdue']);
+  const rows = [
+    invoice({
+      invoiceId: '1', status: 'overdue', dueDate: '2026-10-01', balance: 100000, invoiceNumber: 'INV-OD',
+    }),
+    invoice({
+      invoiceId: '2', status: 'paid', balance: 0, invoiceTotal: 200000, invoiceNumber: 'INV-PAID',
+    }),
+    invoice({
+      invoiceId: '3', status: 'draft', balance: 0, invoiceTotal: 50000, invoiceNumber: 'INV-DRAFT',
+    }),
+    invoice({
+      invoiceId: '4', status: 'sent', dueDate: '2026-12-01', balance: 90000, invoiceNumber: 'INV-SENT',
+    }),
+  ];
+  const overdue = buildReceivableSummary(rows, { ...range, statuses: ['overdue'] });
+  assert.deepEqual(overdue.lines.map((line) => line.invoiceNumber), ['INV-OD']);
+  const paid = buildReceivableSummary(rows, { ...range, statuses: ['paid'] });
+  assert.equal(paid.invoiceCount, 1);
+  assert.equal(paid.grandTotal, 200000);
+  const mixed = buildReceivableSummary(rows, { ...range, statuses: ['paid', 'draft'] });
+  assert.deepEqual(mixed.lines.map((line) => line.invoiceNumber), ['INV-DRAFT', 'INV-PAID']);
+});
+
+test('quantity and delivery fee print on the PDF', async () => {
+  const summary = buildReceivableSummary([
+    invoice({
+      status: 'overdue',
+      dueDate: '2026-10-01',
+      quantity: 12,
+      deliveryFee: 15000,
+      balance: 144000,
+      invoiceTotal: 159000,
+      invoiceNumber: 'INV-QTY',
+    }),
+  ], { ...range, statuses: ['overdue'] });
+  const bytes = await renderReceivableSummaryPdf({
+    ...summary, from: range.from, to: range.to,
+  }, { compress: false });
+  const text = pdfWords(bytes);
+  assert.match(text, /Quantity/);
+  assert.match(text, /Delivery Fee/);
+  assert.match(text, /INV-QTY/);
+  assert.match(text, /IDR15,000\.00/);
+});
+
+test('a chosen customer fills quantity from the invoice JSON', async () => {
+  let detailCalls = 0;
+  const file = await receivableSummaryPdf(
+    { role: 'admin', id: 'user-1' },
+    env,
+    { ...range, customer: 'alpha', status: 'overdue' },
+    {
+      loadSettings: enabled,
+      writeAudit: async () => {},
+      listUnpaidInvoicesInRange: async () => ({
+        truncated: false,
+        invoices: [invoice({
+          status: 'overdue', dueDate: '2026-09-01', quantity: null, deliveryFee: null, balance: 96000,
+        })],
+      }),
+      getInvoiceJson: async () => {
+        detailCalls += 1;
+        return {
+          shipping_charge: 10000,
+          line_items: [{ name: 'STILL 330', quantity: 8, item_total: 96000 }],
+        };
+      },
+    },
+  );
+  assert.equal(detailCalls, 1);
+  assert.equal(file.bytes.subarray(0, 5).toString(), '%PDF-');
+});
+
+test('customer name suggestions return matching names', async () => {
+  const result = await suggestCustomers(
+    { role: 'admin', id: '1' },
+    env,
+    'gym',
+    {
+      loadSettings: enabled,
+      search: async () => [{ customerId: '22', customerName: 'OMNI Gym' }],
+    },
+  );
+  assert.deepEqual(result.customers, [{ customerId: '22', customerName: 'OMNI Gym' }]);
+  await assert.rejects(
+    () => suggestCustomers({ role: 'staff', id: '1' }, env, 'gym', { loadSettings: enabled }),
+    /accountant or admin/,
   );
 });

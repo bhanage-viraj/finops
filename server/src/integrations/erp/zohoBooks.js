@@ -112,15 +112,14 @@ export function assertAllowedUrl(url, dc, method) {
   const invoiceList = method === 'GET'
     && parsed.host === apiHost
     && parsed.pathname === '/books/v3/invoices';
-  const invoicePdf = method === 'GET'
+  const invoiceOne = method === 'GET'
     && parsed.host === apiHost
-    && /^\/books\/v3\/invoices\/\d+$/.test(parsed.pathname)
-    && parsed.searchParams.get('accept') === 'pdf';
+    && /^\/books\/v3\/invoices\/\d+$/.test(parsed.pathname);
   const customerPayment = method === 'POST'
     && parsed.host === apiHost
     && parsed.pathname === '/books/v3/customerpayments';
-  if (!tokenCall && !expenseCall && !invoiceList && !invoicePdf && !customerPayment) {
-    throw zohoFailure('This Zoho integration can only create an expense, list invoices, read an invoice PDF, or record a customer payment.');
+  if (!tokenCall && !expenseCall && !invoiceList && !invoiceOne && !customerPayment) {
+    throw zohoFailure('This Zoho integration can only create an expense, list invoices, read an invoice, or record a customer payment.');
   }
 }
 
@@ -324,25 +323,66 @@ function formatCreatedTime(value) {
   return `${day}/${month}/${year} ${String(hour).padStart(2, '0')}:${minute} ${suffix}`;
 }
 
+const DELIVERY_LINE = /delivery|shipping|ongkir|antar|freight|biaya kirim/;
+
+/** Bottles on product lines, plus shipping_charge and delivery line totals. */
+export function invoiceQtyAndDelivery(invoice) {
+  if (!invoice || typeof invoice !== 'object') return { quantity: null, deliveryFee: null };
+  const shipping = integerMoney(invoice.shipping_charge);
+  let deliveryFee = Number.isInteger(shipping) ? shipping : 0;
+  let quantity = 0;
+  let hasQty = false;
+  const items = Array.isArray(invoice.line_items) ? invoice.line_items : [];
+  for (const item of items) {
+    const name = `${item?.name || ''} ${item?.description || ''}`.toLowerCase();
+    if (DELIVERY_LINE.test(name)) {
+      const lineTotal = integerMoney(item?.item_total);
+      if (Number.isInteger(lineTotal)) deliveryFee += lineTotal;
+      continue;
+    }
+    const qty = Number(item?.quantity);
+    if (!Number.isFinite(qty) || qty < 0) continue;
+    quantity += qty;
+    hasQty = true;
+  }
+  const rounded = Math.round(quantity);
+  const whole = hasQty && Math.abs(quantity - rounded) < 0.01;
+  return {
+    quantity: whole ? rounded : null,
+    deliveryFee: deliveryFee > 0 ? deliveryFee : (Number.isInteger(shipping) ? shipping : null),
+  };
+}
+
 /**
- * Unpaid invoice for the receivable summary. Keeps the fields the Zoho
- * receivable summary prints on each invoice row.
+ * Invoice row for the receivable summary. Unpaid by default; paid and draft
+ * only when those statuses are explicitly allowed.
  */
-export function mapReceivableInvoice(row) {
+export function mapReceivableInvoice(row, options = {}) {
   if (!row || typeof row !== 'object') return null;
   const invoiceId = invoiceIdFrom(row.invoice_id);
   if (!invoiceId) return null;
   const status = String(row.status || '').toLowerCase();
-  if (['paid', 'void', 'draft'].includes(status)) return null;
+  const allow = options.allowStatuses instanceof Set ? options.allowStatuses : null;
+  if (!allow) {
+    if (['paid', 'void', 'draft'].includes(status)) return null;
+  } else if (!allow.has(status) || status === 'void') {
+    return null;
+  }
   const currency = String(row.currency_code || row.currency_symbol || 'IDR').toUpperCase();
   if (currency && currency !== 'IDR' && currency !== 'RP') return null;
   const balance = integerMoney(row.balance ?? row.total);
-  if (!Number.isInteger(balance) || balance <= 0) return null;
+  const invoiceTotal = integerMoney(row.total);
+  const paidOrDraft = status === 'paid' || status === 'draft';
+  if (paidOrDraft && allow) {
+    if (!Number.isInteger(invoiceTotal) && !Number.isInteger(balance)) return null;
+  } else if (!Number.isInteger(balance) || balance <= 0) {
+    return null;
+  }
   const date = String(row.date || '');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   const dueDate = String(row.due_date || '');
   const phone = String(row.customer_phone || row.phone || '').replace(/\D/g, '');
-  const invoiceTotal = integerMoney(row.total);
+  const extras = invoiceQtyAndDelivery(row);
   return {
     invoiceId,
     invoiceNumber: String(row.invoice_number || '').slice(0, 80),
@@ -354,8 +394,10 @@ export function mapReceivableInvoice(row) {
     createdTime: formatCreatedTime(row.created_time),
     dueDate: /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : '',
     status,
-    invoiceTotal: Number.isInteger(invoiceTotal) ? invoiceTotal : balance,
-    balance,
+    invoiceTotal: Number.isInteger(invoiceTotal) ? invoiceTotal : (balance || 0),
+    balance: Number.isInteger(balance) ? balance : 0,
+    quantity: extras.quantity,
+    deliveryFee: extras.deliveryFee,
     currency: 'IDR',
   };
 }
@@ -402,12 +444,24 @@ const SUMMARY_MAX_PAGES = 20;
  * Unpaid invoices whose invoice date falls in the range. Same invoices URL as
  * payment matching, with date_start and date_end. Read only.
  */
-export async function listUnpaidInvoicesInRange({
-  zoho, refreshToken, fromDate, toDate, fetchImpl = fetch,
+const SUMMARY_LIST_STATUSES = new Set(['unpaid', 'overdue', 'paid', 'draft']);
+
+export async function listUnpaidInvoicesInRange(args) {
+  return listInvoicesInDateRange({ ...args, status: 'unpaid' });
+}
+
+/**
+ * Invoices in a date range for one Zoho status. Paid and draft are read live
+ * because the Mongo copy only keeps unpaid rows open.
+ */
+export async function listInvoicesInDateRange({
+  zoho, refreshToken, fromDate, toDate, status = 'unpaid', fetchImpl = fetch,
 }) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fromDate || '')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(toDate || ''))) {
     throw zohoFailure('The date range must be ISO dates.');
   }
+  const listStatus = String(status || 'unpaid').toLowerCase();
+  if (!SUMMARY_LIST_STATUSES.has(listStatus)) throw zohoFailure('That invoice status cannot be listed.');
   const hosts = zohoHosts(zoho.dc);
   const organizationId = String(zoho.organizationId || '');
   if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
@@ -416,10 +470,11 @@ export async function listUnpaidInvoicesInRange({
   const seen = new Set();
   let page = 1;
   let hasMore = true;
+  const allowStatuses = ['paid', 'draft'].includes(listStatus) ? new Set([listStatus]) : null;
   while (hasMore && page <= SUMMARY_MAX_PAGES) {
     const params = new URLSearchParams({
       organization_id: organizationId,
-      status: 'unpaid',
+      status: listStatus,
       date_start: fromDate,
       date_end: toDate,
       page: String(page),
@@ -440,7 +495,7 @@ export async function listUnpaidInvoicesInRange({
     const data = parseInvoiceListBody(text);
     const rows = Array.isArray(data.invoices) ? data.invoices : [];
     for (const row of rows) {
-      const mapped = mapReceivableInvoice(row);
+      const mapped = mapReceivableInvoice(row, allowStatuses ? { allowStatuses } : {});
       if (!mapped || seen.has(mapped.invoiceId)) continue;
       seen.add(mapped.invoiceId);
       invoices.push(mapped);
@@ -821,4 +876,30 @@ export async function getInvoicePdf({ zoho, refreshToken, invoiceId, invoiceNumb
     fileName: pdfFileName(response.headers?.get?.('content-disposition'), invoiceNumber, id),
     contentType: contentType.includes('pdf') ? 'application/pdf' : 'application/pdf',
   };
+}
+
+/** Read-only: one invoice JSON, for quantity and delivery fee on the summary. */
+export async function getInvoiceJson({ zoho, refreshToken, invoiceId, fetchImpl = fetch }) {
+  const id = invoiceIdFrom(invoiceId);
+  if (!id) throw zohoFailure('The invoice id must be numeric.');
+  const hosts = zohoHosts(zoho.dc);
+  const organizationId = String(zoho.organizationId || '');
+  if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
+  const url = `${hosts.api}/books/v3/invoices/${id}?organization_id=${organizationId}`;
+  assertAllowedUrl(url, zoho.dc, 'GET');
+  const token = await accessToken(zoho, refreshToken, fetchImpl);
+  const response = await fetchImpl(url, {
+    method: 'GET',
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+  const text = await response.text();
+  const codeMatch = text.match(/"code"\s*:\s*(-?\d+)/);
+  const code = codeMatch ? Number(codeMatch[1]) : null;
+  if (!response.ok || (code !== null && code !== 0)) {
+    throw zohoFailure(zohoMessage(text, response.status, 'invoice'));
+  }
+  const data = parseInvoiceListBody(text);
+  const invoice = data.invoice && typeof data.invoice === 'object' ? data.invoice : null;
+  if (!invoice) throw zohoFailure('Zoho Books did not return the invoice.');
+  return invoice;
 }
