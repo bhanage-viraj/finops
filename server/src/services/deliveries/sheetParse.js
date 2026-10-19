@@ -1,6 +1,7 @@
 import { parseQty, parseRupiah } from './money.js';
 import { extractTimeTags } from './timeTags.js';
 import { classifyProduct } from './productKind.js';
+import { lookupUnitPrice } from './priceList.js';
 import { resolveLocation } from './locationResolver.js';
 import { areaFromTabTitle } from './areaCatalog.js';
 import { nameKey, formatPlate } from './names.js';
@@ -160,7 +161,7 @@ function buildItem({ productName, packType, qtyPack, qty, harga }) {
     packType: String(packType || '').trim(),
     packQty: qPack.missing ? null : qPack.qty,
     qty: q.missing ? null : q.qty,
-    unitPrice: price.missing ? null : price.amount,
+    unitPrice: price.missing ? lookupUnitPrice(productName, { packType }) : price.amount,
     qtyMissing: q.missing,
     kind: classif.kind,
   };

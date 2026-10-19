@@ -13,6 +13,7 @@ import {
   deleteDeliveryDay,
 } from '../../api/deliveries.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
+import { formatRupiah } from '../../utils/formatRupiah.js';
 import LocationMap from './LocationMap.jsx';
 
 function mapsUrl(stop) {
@@ -34,7 +35,11 @@ function stopWhatsAppUrl(stop) {
 
 function itemsLabel(stop) {
   return (stop.plannedItems || [])
-    .map((item) => `${item.productName}${item.qty != null ? ` ×${item.qty}` : ''}`)
+    .map((item) => {
+      const qty = item.qty != null ? ` ×${item.qty}` : '';
+      const price = Number.isInteger(item.unitPrice) ? ` ${formatRupiah(item.unitPrice)}` : '';
+      return `${item.productName}${qty}${price}`;
+    })
     .join(', ');
 }
 

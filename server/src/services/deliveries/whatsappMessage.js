@@ -1,10 +1,12 @@
 import { mapsSearchUrl, needsLocationCheck, routeDirectionsLinks } from './mapsLink.js';
+import { applyListPrices } from './priceList.js';
 
 function itemLine(item) {
   const bits = [item.productName];
   if (item.qty != null) bits.push(`x${item.qty}`);
   else if (item.packQty != null) bits.push(`${item.packQty} pack`);
   if (item.packType) bits.push(`(${item.packType})`);
+  if (Number.isInteger(item.unitPrice)) bits.push(`Rp ${item.unitPrice.toLocaleString('id-ID')}`);
   return bits.join(' ');
 }
 
@@ -32,7 +34,7 @@ export function buildRouteWhatsAppMessage(route, stops, { depot = null } = {}) {
     const flag = needsLocationCheck(stop) ? ' ⚠️ CEK LOKASI' : '';
     const priority = stop.isNewCustomer || stop.isPriority ? ' 🆕 NEW' : '';
     lines.push(`${i + 1}. *${stop.customerName}*${priority}${flag}`);
-    for (const item of stop.plannedItems || []) {
+    for (const item of applyListPrices(stop.plannedItems, route?.areaName)) {
       lines.push(`   - ${itemLine(item)}`);
     }
     if (stop.note) {

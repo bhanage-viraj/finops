@@ -11,6 +11,7 @@ import { httpError } from '../../utils/http.js';
 import { orderStops } from './stopOrder.js';
 import { loadingTotalsObject } from './loadingList.js';
 import { buildRouteWhatsAppMessage, whatsappUrl } from './whatsappMessage.js';
+import { applyListPrices } from './priceList.js';
 import { mapsSearchUrl } from './mapsLink.js';
 import { coordsFromMapsUrl, parseDms, parsePlusCode, parseDecimalCoords } from './locationResolver.js';
 import { expandMapsLink } from './expandMapsLink.js';
@@ -32,7 +33,11 @@ export async function getDayDetail(dayId) {
   const day = await DeliveryDay.findById(dayId).lean();
   if (!day) throw httpError(404, 'Delivery day not found.');
   const routes = await DeliveryRoute.find({ dayId }).sort({ number: 1, areaName: 1 }).lean();
-  const stops = await DeliveryStop.find({ dayId }).sort({ sortIndex: 1 }).lean();
+  const areaByRoute = new Map(routes.map((route) => [String(route._id), route.areaName]));
+  const stops = (await DeliveryStop.find({ dayId }).sort({ sortIndex: 1 }).lean()).map((stop) => ({
+    ...stop,
+    plannedItems: applyListPrices(stop.plannedItems, areaByRoute.get(String(stop.routeId))),
+  }));
   return { day, routes, stops };
 }
 
