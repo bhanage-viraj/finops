@@ -91,7 +91,7 @@ export function readEnv(source = process.env) {
       paymentMode: String(source.ZOHO_PAYMENT_MODE || 'Bank Transfer').trim() || 'Bank Transfer',
       redirectUri: source.ZOHO_REDIRECT_URI || 'http://localhost:4000/auth/zoho/callback',
       refreshToken: source.ZOHO_REFRESH_TOKEN || '',
-      // Background copy of unpaid invoices into MongoDB. "off" stops the nightly and 10-minute reads.
+      // Background copy of unpaid invoices into MongoDB. "off" stops the nightly and 2-minute reads.
       invoiceSync: String(source.ZOHO_INVOICE_SYNC || '').trim().toLowerCase() !== 'off',
     },
     cartrack: {

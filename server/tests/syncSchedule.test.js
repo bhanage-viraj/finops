@@ -22,18 +22,18 @@ test('next job is a full read until the first copy exists, then after 02:00 Bali
   }, afterNight), 'full');
 });
 
-test('changed invoices are due every 10 minutes, and a recent error waits 10 minutes', () => {
+test('changed invoices are due every 2 minutes, and a recent error waits 10 minutes', () => {
   const now = new Date('2026-10-19T07:00:00.000Z');
   const started = new Date('2026-10-19T06:00:00.000Z');
   assert.equal(nextInvoiceJob({
     lastFullOkAt: started,
     lastFullStartedAt: started,
-    lastChangesRunAt: new Date(now.getTime() - 10 * 60 * 1000),
+    lastChangesRunAt: new Date(now.getTime() - 2 * 60 * 1000),
   }, now), 'changes');
   assert.equal(nextInvoiceJob({
     lastFullOkAt: started,
     lastFullStartedAt: started,
-    lastChangesRunAt: new Date(now.getTime() - 9 * 60 * 1000),
+    lastChangesRunAt: new Date(now.getTime() - 60 * 1000),
   }, now), null);
   assert.equal(nextInvoiceJob({
     lastFullOkAt: null,

@@ -2,7 +2,7 @@ import BankPayment from '../../models/BankPayment.js';
 import Setting from '../../models/Setting.js';
 import { createCustomerPayment, missingZohoConfig } from '../../integrations/erp/zohoBooks.js';
 import {
-  ensureInvoiceStore, openInvoicesForMatching, refreshCustomerInvoices,
+  ensureInvoiceStore, openInvoicesForCustomer, openInvoicesForMatching, refreshCustomerInvoices,
 } from '../zohoInvoices/invoiceStore.js';
 import { readPaymentScreenshot } from '../ai/paymentReader.js';
 import { writeAudit } from '../audit/auditLogger.js';
@@ -439,10 +439,10 @@ export async function processPayment(id, env) {
       // Still load every unpaid invoice for this customer for the tick list.
       if (zohoOutcome.status === 'fulfilled' && latest.zohoCustomerId) {
         const cid = String(latest.zohoCustomerId);
-        const fresh = await refreshCustomerInvoices(env, cid);
-        const rows = fresh?.changed ? await openInvoicesForMatching() : zohoOutcome.value;
+        await refreshCustomerInvoices(env, cid);
+        const rows = await openInvoicesForCustomer(cid);
         latest.matchCandidates = sortOldestFirst(
-          rows.filter((row) => String(row.customerId) === cid && Number(row.remaining) > 0),
+          rows.filter((row) => Number(row.remaining) > 0),
         ).map((row) => ({
           invoiceId: row.invoiceId,
           invoiceNo: row.invoiceNo || row.invoiceNumber,
@@ -1003,12 +1003,15 @@ export function selectOpenInvoices(mapped, search = '', { customerId = '' } = {}
  */
 export async function listOpenInvoices(env, search = '', { customerId = '' } = {}) {
   const cid = String(customerId || '').trim();
-  let invoices = await loadZohoInvoices(env);
-  // One customer's tick list: read that customer from Zoho first (throttled to every 2 minutes).
-  if (cid && (await refreshCustomerInvoices(env, cid))?.changed) {
-    invoices = await openInvoicesForMatching();
+  // One customer: read that customer from Zoho now. Do not wait for the company-wide copy.
+  if (cid) {
+    await requireZohoReady(env);
+    await refreshCustomerInvoices(env, cid);
+    const invoices = await openInvoicesForCustomer(cid);
+    return selectOpenInvoices(invoices.map(mapOpenInvoiceRow), '', { customerId: cid });
   }
-  return selectOpenInvoices(invoices.map(mapOpenInvoiceRow), search, { customerId: cid });
+  const invoices = await loadZohoInvoices(env);
+  return selectOpenInvoices(invoices.map(mapOpenInvoiceRow), search, {});
 }
 
 export function fileKeyFor(payment) {

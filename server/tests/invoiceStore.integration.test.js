@@ -6,8 +6,8 @@ import ZohoInvoice from '../src/models/ZohoInvoice.js';
 import ZohoSyncState from '../src/models/ZohoSyncState.js';
 import { clearZohoTokenCache } from '../src/integrations/erp/zohoBooks.js';
 import {
-  openInvoicesForMatching, overdueInvoicesFromStore, refreshCustomerInvoices, resetInvoiceStoreMemory,
-  runInvoiceSync, setInvoiceStoreModels, unpaidInvoicesInRange,
+  openInvoicesForCustomer, openInvoicesForMatching, overdueInvoicesFromStore, refreshCustomerInvoices,
+  resetInvoiceStoreMemory, runInvoiceSync, setInvoiceStoreModels, unpaidInvoicesInRange,
 } from '../src/services/zohoInvoices/invoiceStore.js';
 
 const uri = 'mongodb://127.0.0.1:27017/finops_zoho_invoices_test';
@@ -135,9 +135,9 @@ test('a customer refresh adds a third unpaid invoice that the capped matcher use
     const fresh = await refreshCustomerInvoices(env, '22', { force: true, deps: deps(fetchImpl) });
     assert.equal(fresh.changed, true);
     assert.equal(fresh.openCount, 3);
-    const matching = await openInvoicesForMatching();
+    const matching = await openInvoicesForCustomer('22');
     assert.deepEqual(
-      matching.filter((invoice) => invoice.customerId === '22').map((invoice) => invoice.invoiceNo).sort(),
+      matching.map((invoice) => invoice.invoiceNo).sort(),
       ['INV-201', 'INV-202', 'INV-203'],
     );
   });

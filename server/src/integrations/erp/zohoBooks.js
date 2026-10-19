@@ -195,6 +195,18 @@ function invoiceIdFrom(raw) {
   return /^\d+$/.test(text) ? text : '';
 }
 
+/**
+ * Zoho sometimes sends 19-digit ids as JSON numbers. JSON.parse would round them.
+ * Quote invoice_id and customer_id before parse so matching can find every invoice.
+ */
+export function parseInvoiceListBody(text) {
+  const quoted = String(text || '').replace(
+    /"(invoice_id|customer_id)"\s*:\s*(\d+)/g,
+    '"$1":"$2"',
+  );
+  try { return JSON.parse(quoted); } catch { return {}; }
+}
+
 /** Map one Zoho invoice row. Skip rows that are not overdue rupiah balances. */
 export function mapOverdueInvoice(row, today = new Date()) {
   if (!row || typeof row !== 'object') return null;
@@ -370,16 +382,9 @@ export async function listUnpaidInvoicesForMatching({ zoho, refreshToken, fetchI
     if (!response.ok || (code !== null && code !== 0)) {
       throw zohoFailure(zohoMessage(text, response.status, 'invoice'));
     }
-    let data = {};
-    try { data = JSON.parse(text); } catch { data = {}; }
+    const data = parseInvoiceListBody(text);
     const rows = Array.isArray(data.invoices) ? data.invoices : [];
     for (const row of rows) {
-      if (row && row.invoice_id != null && typeof row.invoice_id !== 'string') {
-        row.invoice_id = String(row.invoice_id);
-      }
-      if (row && row.customer_id != null && typeof row.customer_id !== 'string') {
-        row.customer_id = String(row.customer_id);
-      }
       const mapped = mapUnpaidInvoiceForMatching(row);
       if (mapped) invoices.push(mapped);
     }
@@ -432,16 +437,9 @@ export async function listUnpaidInvoicesInRange({
     if (!response.ok || (code !== null && code !== 0)) {
       throw zohoFailure(zohoMessage(text, response.status, 'invoice'));
     }
-    let data = {};
-    try { data = JSON.parse(text); } catch { data = {}; }
+    const data = parseInvoiceListBody(text);
     const rows = Array.isArray(data.invoices) ? data.invoices : [];
     for (const row of rows) {
-      if (row && row.invoice_id != null && typeof row.invoice_id !== 'string') {
-        row.invoice_id = String(row.invoice_id);
-      }
-      if (row && row.customer_id != null && typeof row.customer_id !== 'string') {
-        row.customer_id = String(row.customer_id);
-      }
       const mapped = mapReceivableInvoice(row);
       if (!mapped || seen.has(mapped.invoiceId)) continue;
       seen.add(mapped.invoiceId);
@@ -504,7 +502,8 @@ export function mapStoredInvoice(row) {
   };
 }
 
-const LIST_FILTERS = new Set(['status', 'customer_id', 'date_start', 'last_modified_time']);
+const LIST_FILTERS = new Set(['status', 'customer_id', 'date_start', 'date_end', 'last_modified_time']);
+export const OPEN_INVOICE_STATUSES = ['overdue', 'partially_paid', 'sent', 'viewed'];
 const RATE_LIMIT_RETRIES = 3;
 const STORE_MAX_PAGES = 400;
 
@@ -529,7 +528,7 @@ async function readInvoicePage({ fetchImpl, url, token, sleep }) {
     if (!response.ok || (code !== null && code !== 0)) {
       throw zohoFailure(zohoMessage(text, response.status, 'invoice'));
     }
-    try { return JSON.parse(text); } catch { return {}; }
+    return parseInvoiceListBody(text);
   }
 }
 
@@ -568,8 +567,6 @@ export async function listInvoicePages({
     zohoRows += rows.length;
     const pageInvoices = [];
     for (const row of rows) {
-      if (row && row.invoice_id != null && typeof row.invoice_id !== 'string') row.invoice_id = String(row.invoice_id);
-      if (row && row.customer_id != null && typeof row.customer_id !== 'string') row.customer_id = String(row.customer_id);
       const mapped = mapStoredInvoice(row);
       if (!mapped || seen.has(mapped.invoiceId)) continue;
       seen.add(mapped.invoiceId);
@@ -765,20 +762,10 @@ async function listInvoicesByStatus({
     if (!response.ok || (code !== null && code !== 0)) {
       throw zohoFailure(zohoMessage(text, response.status, 'invoice'));
     }
-    let data = {};
-    try { data = JSON.parse(text); } catch { data = {}; }
+    const data = parseInvoiceListBody(text);
     const rows = Array.isArray(data.invoices) ? data.invoices : [];
     zohoRows += rows.length;
     for (const row of rows) {
-      // Keep long ids as strings even when JSON.parse made them numbers.
-      if (row && row.invoice_id != null && typeof row.invoice_id !== 'string') {
-        const idMatch = text.match(new RegExp(`"invoice_id"\\s*:\\s*"?(${String(row.invoice_id)})"?`));
-        if (idMatch) row.invoice_id = idMatch[1];
-        else row.invoice_id = String(row.invoice_id);
-      }
-      if (row && row.customer_id != null && typeof row.customer_id !== 'string') {
-        row.customer_id = String(row.customer_id);
-      }
       const mapped = mapOverdueInvoice(row, today);
       if (mapped) invoices.push(mapped);
     }

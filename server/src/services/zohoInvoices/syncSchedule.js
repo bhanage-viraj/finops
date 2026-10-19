@@ -2,7 +2,7 @@ import { loadSyncState, runInvoiceSync, zohoConnection } from './invoiceStore.js
 
 const TICK_MS = 60 * 1000;
 const FIRST_TICK_MS = 15 * 1000;
-export const CHANGES_EVERY_MS = 10 * 60 * 1000;
+export const CHANGES_EVERY_MS = 2 * 60 * 1000;
 const ERROR_BACKOFF_MS = 10 * 60 * 1000;
 // Full read at 02:00 Bali time (WITA, UTC+8), when nobody is matching payments.
 const NIGHT_HOUR_WITA = 2;

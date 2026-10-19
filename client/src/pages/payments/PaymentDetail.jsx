@@ -233,25 +233,24 @@ export default function PaymentDetail() {
     if (fromDetail.length) {
       setCustomerInvoices(fromDetail);
       setLoadingInvoices(false);
-      return undefined;
+    } else {
+      const seeded = (payment?.candidates || [])
+        .filter((row) => !row.customerId || String(row.customerId) === String(matchedCustomerId))
+        .map((row) => ({
+          id: row.invoiceId,
+          invoiceNo: row.invoiceNo,
+          date: row.date || null,
+          dueDate: row.dueDate || null,
+          remaining: row.remaining,
+          erpCustomerId: row.customerId || matchedCustomerId,
+          customerName: row.customerName || '',
+        }))
+        .sort(oldestFirst);
+      if (seeded.length) setCustomerInvoices(seeded);
+      else setLoadingInvoices(true);
     }
 
-    const seeded = (payment?.candidates || [])
-      .filter((row) => !row.customerId || String(row.customerId) === String(matchedCustomerId))
-      .map((row) => ({
-        id: row.invoiceId,
-        invoiceNo: row.invoiceNo,
-        date: row.date || null,
-        dueDate: row.dueDate || null,
-        remaining: row.remaining,
-        erpCustomerId: row.customerId || matchedCustomerId,
-        customerName: row.customerName || '',
-      }))
-      .sort(oldestFirst);
-    if (seeded.length) setCustomerInvoices(seeded);
-
     let cancelled = false;
-    setLoadingInvoices(true);
     fetchOpenInvoices('', matchedCustomerId)
       .then((body) => {
         if (cancelled) return;
@@ -261,7 +260,7 @@ export default function PaymentDetail() {
         if (rows.length) setCustomerInvoices(rows);
       })
       .catch(() => {
-        // Keep seeded candidates so the accountant still sees every outstanding invoice.
+        // Keep the list already on screen so the accountant still sees outstanding invoices.
       })
       .finally(() => {
         if (!cancelled) setLoadingInvoices(false);

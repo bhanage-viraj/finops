@@ -5,7 +5,7 @@ import {
   assertAllowedUrl, authorizationUrl, clearZohoTokenCache, createCustomerPayment, createExpense,
   createOauthState, exchangeAuthCode, getInvoicePdf, listInvoicePages, listOverdueInvoices, listUnpaidInvoicesInRange,
   mapOverdueInvoice, mapReceivableInvoice, mapStoredInvoice, mapUnpaidInvoiceForMatching, missingZohoConfig,
-  receiptExtension, verifyOauthState, zohoTimeMs, zohoTimeParam,
+  parseInvoiceListBody, receiptExtension, verifyOauthState, zohoTimeMs, zohoTimeParam,
   ZOHO_CUSTOMER_PAYMENT_SCOPE, ZOHO_OAUTH_SCOPE,
 } from '../src/integrations/erp/zohoBooks.js';
 import { receiptForZoho } from '../src/services/documents/zohoExpense.js';
@@ -510,6 +510,13 @@ test('the code exchange calls only the token endpoint', async () => {
   assert.equal(refresh, 'new-refresh');
   assert.equal(calls.length, 1);
   assert.equal(new URL(calls[0]).pathname, '/oauth/v2/token');
+});
+
+test('invoice list JSON keeps 19-digit ids as strings', () => {
+  const data = parseInvoiceListBody('{"code":0,"invoices":[{"invoice_id":5802591000256503209,"customer_id":5802591000256503210,"invoice_number":"INV-1"}]}');
+  assert.equal(data.invoices[0].invoice_id, '5802591000256503209');
+  assert.equal(data.invoices[0].customer_id, '5802591000256503210');
+  assert.notEqual(String(Number(data.invoices[0].invoice_id)), data.invoices[0].invoice_id);
 });
 
 test('stored invoice mapper keeps open unpaid rows and closes paid ones', () => {

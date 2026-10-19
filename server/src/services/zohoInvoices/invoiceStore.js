@@ -2,7 +2,8 @@ import Setting from '../../models/Setting.js';
 import ZohoInvoice from '../../models/ZohoInvoice.js';
 import ZohoSyncState from '../../models/ZohoSyncState.js';
 import {
-  listInvoicePages, mapOverdueInvoice, mapReceivableInvoice, missingZohoConfig, zohoTimeMs, zohoTimeParam,
+  listInvoicePages, mapOverdueInvoice, mapReceivableInvoice, missingZohoConfig, OPEN_INVOICE_STATUSES,
+  zohoTimeMs, zohoTimeParam,
 } from '../../integrations/erp/zohoBooks.js';
 import { writeAudit } from '../audit/auditLogger.js';
 import { httpError } from '../../utils/http.js';
@@ -19,7 +20,7 @@ const CHANGES_OVERLAP_MS = 5 * 60 * 1000;
 const CHANGES_MAX_PAGES = 15;
 const RECENT_DAYS = 14;
 const RECENT_MAX_PAGES = 30;
-const CUSTOMER_MAX_PAGES = 20;
+const CUSTOMER_MAX_PAGES = 50;
 const CUSTOMER_REFRESH_MS = 2 * 60 * 1000;
 // After a full read, invoices no longer returned are checked per customer before they are closed.
 const VERIFY_CUSTOMER_LIMIT = 100;
@@ -148,10 +149,47 @@ export async function refreshCustomerInvoices(env, customerId, { force = false, 
   return work;
 }
 
+function mergeInvoices(lists) {
+  const byId = new Map();
+  for (const row of lists.flat()) {
+    if (row?.invoiceId) byId.set(row.invoiceId, row);
+  }
+  return [...byId.values()];
+}
+
+/** Every unpaid invoice Zoho will list. Splits by status, then by year, if one list is too long. */
+async function listAllUnpaid(env, conn, deps) {
+  const unpaid = await listInvoicePages(listArgs(env, conn, deps, { filters: { status: 'unpaid' } }));
+  if (!unpaid.truncated) return unpaid;
+
+  console.warn('Zoho unpaid list was truncated; reading each open status.');
+  const parts = [];
+  let truncated = false;
+  for (const status of OPEN_INVOICE_STATUSES) {
+    const part = await listInvoicePages(listArgs(env, conn, deps, { filters: { status } }));
+    parts.push(part.invoices);
+    truncated = truncated || part.truncated;
+  }
+  if (!truncated) return { invoices: mergeInvoices(parts), truncated: false };
+
+  console.warn('Zoho status lists were truncated; reading unpaid invoices by year.');
+  truncated = false;
+  const thisYear = Number(witaDay(new Date()).slice(0, 4));
+  const yearly = [];
+  for (let year = thisYear; year >= thisYear - 15; year -= 1) {
+    const part = await listInvoicePages(listArgs(env, conn, deps, {
+      filters: { status: 'unpaid', date_start: `${year}-01-01`, date_end: `${year}-12-31` },
+    }));
+    yearly.push(part.invoices);
+    truncated = truncated || part.truncated;
+  }
+  return { invoices: mergeInvoices([...parts, ...yearly]), truncated };
+}
+
 async function runFullSync(env, conn, deps) {
   const startedAt = new Date();
   await setState({ lastFullStartedAt: startedAt });
-  const result = await listInvoicePages(listArgs(env, conn, deps, { filters: { status: 'unpaid' } }));
+  const result = await listAllUnpaid(env, conn, deps);
   const open = result.invoices.filter((row) => row.open);
   await saveInvoices(open);
   let closed = 0;
@@ -159,14 +197,17 @@ async function runFullSync(env, conn, deps) {
     // A row can drop out of a page while Zoho shifts pages during the read. Check those customers once.
     const unseen = await Invoice.find({ open: true, lastSeenAt: { $lt: startedAt } }).select('customerId').lean();
     const customers = [...new Set(unseen.map((row) => row.customerId).filter(Boolean))];
-    if (customers.length <= VERIFY_CUSTOMER_LIMIT) {
+    if (customers.length > VERIFY_CUSTOMER_LIMIT) {
+      // Closing them would drop invoices that only missed a page. Keep them until the next full read.
+      console.warn(`Full sync left ${customers.length} customers unchecked; not closing unseen invoices.`);
+    } else {
       for (const customerId of customers) {
         await refreshCustomerNow(env, conn, customerId, deps).catch((error) => {
           console.error('Zoho customer check after full sync failed', error.message);
         });
       }
+      closed = await closeUnseen({ lastSeenAt: { $lt: startedAt } });
     }
-    closed = await closeUnseen({ lastSeenAt: { $lt: startedAt } });
   }
   await setState({
     lastFullOkAt: new Date(),
@@ -178,6 +219,7 @@ async function runFullSync(env, conn, deps) {
     lastError: '',
     lastErrorAt: null,
   });
+  console.log(`Zoho invoice store full: ${open.length} open, ${closed} closed, truncated=${result.truncated}`);
   return { kind: 'full', open: open.length, closed, truncated: result.truncated };
 }
 
@@ -225,6 +267,7 @@ async function runChangesSync(env, conn, deps) {
     lastError: '',
     lastErrorAt: null,
   });
+  console.log(`Zoho invoice store changes: ${result.invoices.length} rows, truncated=${result.truncated}`);
   return { kind: 'changes', changed: result.invoices.length, truncated: result.truncated };
 }
 
@@ -322,6 +365,14 @@ function toMatchingInvoice(doc) {
 export async function openInvoicesForMatching() {
   const rows = await openRows();
   return rows.filter((row) => row.customerId && row.balance > 0).map(toMatchingInvoice);
+}
+
+/** One customer's unpaid invoices from the copy, not a capped company-wide slice. */
+export async function openInvoicesForCustomer(customerId) {
+  const id = String(customerId || '').trim();
+  if (!/^\d+$/.test(id)) return [];
+  const rows = await Invoice.find({ open: true, customerId: id, balance: { $gt: 0 } }).lean();
+  return rows.map(toMatchingInvoice);
 }
 
 /** Overdue invoices for Follow-up, through the same rules as the live Zoho list. */

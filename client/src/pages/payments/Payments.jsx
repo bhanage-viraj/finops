@@ -138,9 +138,9 @@ export default function Payments() {
     return () => clearInterval(timer);
   }, [readingCount > 0]);
 
-  // Pull the Zoho unpaid list as soon as the page opens so the first match is instant.
+  // Kick the stored copy (do not wait on every unpaid invoice) so matching can use it.
   useEffect(() => {
-    if (canWarm) fetchOpenInvoices().catch(() => {});
+    if (canWarm) fetchInvoiceSync().catch(() => {});
   }, [canWarm]);
 
   // Warm Zoho unpaid list while they paste the caption (faster match after upload).
