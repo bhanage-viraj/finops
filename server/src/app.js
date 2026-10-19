@@ -62,7 +62,16 @@ export function createApp(env, options = {}) {
     },
   }));
   const allowedOrigins = [...new Set([env.clientUrl, 'http://localhost:5173'])];
-  app.use(cors({ origin: allowedOrigins }));
+  app.use(cors({
+    origin: allowedOrigins,
+    exposedHeaders: [
+      'Content-Disposition',
+      'X-Summary-Customers',
+      'X-Summary-Total',
+      'X-Summary-Phone',
+      'X-Summary-Name',
+    ],
+  }));
   app.use(morgan('dev', {
     skip: (req) => req.path.startsWith('/auth/zoho/callback'),
   }));

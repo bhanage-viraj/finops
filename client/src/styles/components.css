@@ -662,6 +662,9 @@ label.btn.is-disabled {
   height: 280px;
 }
 .followup-head { gap: var(--space-2); flex-wrap: wrap; }
+.followup-summary h2 { margin: 0 0 var(--space-2); font-size: var(--text-section); }
+.followup-summary .hint { margin: 0; }
+.followup-summary .filters { margin-bottom: 0; align-items: end; }
 .followup-count-row { justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
 .followup-count-row .hint { margin: 0; }
 .followup-pager {

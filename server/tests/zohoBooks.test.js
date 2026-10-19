@@ -3,8 +3,8 @@ import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
   assertAllowedUrl, authorizationUrl, clearZohoTokenCache, createCustomerPayment, createExpense,
-  createOauthState, exchangeAuthCode, getInvoicePdf, listOverdueInvoices,
-  mapOverdueInvoice, mapUnpaidInvoiceForMatching, missingZohoConfig, receiptExtension, verifyOauthState,
+  createOauthState, exchangeAuthCode, getInvoicePdf, listOverdueInvoices, listUnpaidInvoicesInRange,
+  mapOverdueInvoice, mapReceivableInvoice, mapUnpaidInvoiceForMatching, missingZohoConfig, receiptExtension, verifyOauthState,
   ZOHO_CUSTOMER_PAYMENT_SCOPE, ZOHO_OAUTH_SCOPE,
 } from '../src/integrations/erp/zohoBooks.js';
 import { receiptForZoho } from '../src/services/documents/zohoExpense.js';
@@ -157,6 +157,77 @@ test('createCustomerPayment sends an explicit payment mode label', async () => {
   });
   const paymentCall = calls.find((c) => c.url.includes('/customerpayments'));
   assert.equal(JSON.parse(paymentCall.body).payment_mode, 'Bank Transfer');
+});
+
+test('receivable invoice mapper keeps the date, phone and integer balance', () => {
+  const mapped = mapReceivableInvoice({
+    invoice_id: '9820000000000000009',
+    customer_id: '9820000000000000011',
+    invoice_number: 'INV-9',
+    customer_name: 'Toko Contoh',
+    customer_phone: '+62 812-000',
+    date: '2026-10-02',
+    due_date: '2026-10-09',
+    status: 'sent',
+    balance: 150000,
+    currency_code: 'IDR',
+  });
+  assert.equal(mapped.balance, 150000);
+  assert.equal(mapped.date, '2026-10-02');
+  assert.equal(mapped.customerPhone, '62812000');
+  assert.equal(mapReceivableInvoice({
+    invoice_id: '1', customer_id: '2', invoice_number: 'X', customer_name: 'A',
+    date: '2026-10-02', status: 'paid', balance: 1000, currency_code: 'IDR',
+  }), null);
+  assert.equal(mapReceivableInvoice({
+    invoice_id: '1', customer_id: '2', invoice_number: 'X', customer_name: 'A',
+    date: '2026-10-02', status: 'sent', balance: 10.5, currency_code: 'IDR',
+  }), null);
+  assert.equal(mapReceivableInvoice({
+    invoice_id: '1', customer_id: '2', invoice_number: 'X', customer_name: 'A',
+    date: '2026-10-02', status: 'sent', balance: 1000, currency_code: 'USD',
+  }), null);
+});
+
+test('receivable summary lists unpaid invoices on the existing invoices URL', async () => {
+  clearZohoTokenCache();
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method || 'GET' });
+    if (String(url).includes('/oauth/v2/token')) return tokenResponse();
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        code: 0,
+        invoices: [{
+          invoice_id: '982000000561001',
+          customer_id: '982000000561099',
+          invoice_number: 'INV-1',
+          customer_name: 'Toko A',
+          date: '2026-10-03',
+          due_date: '2026-10-10',
+          status: 'overdue',
+          balance: 250000,
+          currency_code: 'IDR',
+        }],
+        page_context: { has_more_page: false },
+      }),
+    };
+  };
+  const result = await listUnpaidInvoicesInRange({
+    zoho, refreshToken: zoho.refreshToken, fromDate: '2026-10-01', toDate: '2026-10-31', fetchImpl,
+  });
+  assert.equal(result.truncated, false);
+  assert.equal(result.invoices.length, 1);
+  assert.equal(result.invoices[0].balance, 250000);
+  const listCall = calls.find((call) => call.url.includes('/books/v3/invoices?'));
+  const listed = new URL(listCall.url);
+  assert.equal(listed.pathname, '/books/v3/invoices');
+  assert.equal(listed.searchParams.get('status'), 'unpaid');
+  assert.equal(listed.searchParams.get('date_start'), '2026-10-01');
+  assert.equal(listed.searchParams.get('date_end'), '2026-10-31');
+  assert.equal(calls.some((call) => call.url.includes('/books/v3/reports')), false);
 });
 
 test('overdue invoice rows keep string ids and integer rupiah', () => {

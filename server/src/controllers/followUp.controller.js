@@ -1,4 +1,5 @@
 import { followUpInvoicePdf } from '../services/followUp/invoicePdf.js';
+import { receivableSummaryPdf } from '../services/followUp/receivableSummaryPdf.js';
 import { todayFollowUp } from '../services/followUp/today.js';
 import { asyncHandler } from '../utils/http.js';
 
@@ -24,6 +25,24 @@ export function invoicePdf(env) {
     res.set('Content-Type', file.contentType || 'application/pdf');
     res.set('Content-Disposition', `attachment; filename="${file.fileName || 'invoice.pdf'}"`);
     res.set('Cache-Control', 'private, max-age=60');
+    res.send(file.bytes);
+  });
+}
+
+export function receivableSummary(env) {
+  return asyncHandler(async (req, res) => {
+    const file = await receivableSummaryPdf(req.user, env, {
+      from: String(req.query.from || ''),
+      to: String(req.query.to || ''),
+      customer: String(req.query.customer || ''),
+    });
+    res.set('Content-Type', file.contentType || 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="${file.fileName || 'Receivable-Summary.pdf'}"`);
+    res.set('X-Summary-Customers', String(file.customerCount));
+    res.set('X-Summary-Total', String(file.total));
+    res.set('X-Summary-Phone', file.phone || '');
+    res.set('X-Summary-Name', encodeURIComponent(file.customerName || ''));
+    res.set('Cache-Control', 'private, no-store');
     res.send(file.bytes);
   });
 }

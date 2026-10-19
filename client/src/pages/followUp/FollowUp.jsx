@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchFollowUpInvoicePdf, fetchFollowUpToday } from '../../api/followUp.js';
+import ReceivableSummary from './ReceivableSummary.jsx';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 
 function displayDate(iso) {
@@ -867,6 +868,7 @@ export default function FollowUp() {
           {filtered.length > 0 && <Pager info={pageInfo} busy={busy} onPage={goToPage} />}
         </section>
       )}
+      <ReceivableSummary />
     </>
   );
 }

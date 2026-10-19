@@ -292,6 +292,41 @@ export function mapUnpaidInvoiceForMatching(row) {
   };
 }
 
+/**
+ * Unpaid invoice for the receivable summary. Keeps the invoice date and phone
+ * so the report can group by customer without printing each invoice.
+ */
+export function mapReceivableInvoice(row) {
+  if (!row || typeof row !== 'object') return null;
+  const invoiceId = invoiceIdFrom(row.invoice_id);
+  if (!invoiceId) return null;
+  const status = String(row.status || '').toLowerCase();
+  if (['paid', 'void', 'draft'].includes(status)) return null;
+  const currency = String(row.currency_code || row.currency_symbol || 'IDR').toUpperCase();
+  if (currency && currency !== 'IDR' && currency !== 'RP') return null;
+  const balanceRaw = row.balance ?? row.total;
+  const balanceNum = Number(balanceRaw);
+  if (!Number.isFinite(balanceNum) || balanceNum <= 0) return null;
+  const balance = Math.round(balanceNum);
+  if (Math.abs(balanceNum - balance) > 0.01) return null;
+  const date = String(row.date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const dueDate = String(row.due_date || '');
+  const phone = String(row.customer_phone || row.phone || '').replace(/\D/g, '');
+  return {
+    invoiceId,
+    invoiceNumber: String(row.invoice_number || '').slice(0, 80),
+    customerId: customerIdFrom(row.customer_id),
+    customerName: String(row.customer_name || '').trim().slice(0, 120),
+    customerPhone: phone.slice(0, 20),
+    date,
+    dueDate: /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : '',
+    status,
+    balance,
+    currency: 'IDR',
+  };
+}
+
 /** List unpaid Zoho invoices for Payments matching. Separate from Follow-up overdue list. */
 export async function listUnpaidInvoicesForMatching({ zoho, refreshToken, fetchImpl = fetch }) {
   const hosts = zohoHosts(zoho.dc);
@@ -333,6 +368,70 @@ export async function listUnpaidInvoicesForMatching({ zoho, refreshToken, fetchI
     if (rows.length === 0) hasMore = false;
   }
   return invoices;
+}
+
+const SUMMARY_MAX_PAGES = 20;
+
+/**
+ * Unpaid invoices whose invoice date falls in the range. Same invoices URL as
+ * payment matching, with date_start and date_end. Read only.
+ */
+export async function listUnpaidInvoicesInRange({
+  zoho, refreshToken, fromDate, toDate, fetchImpl = fetch,
+}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fromDate || '')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(toDate || ''))) {
+    throw zohoFailure('The date range must be ISO dates.');
+  }
+  const hosts = zohoHosts(zoho.dc);
+  const organizationId = String(zoho.organizationId || '');
+  if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
+  const token = await accessToken(zoho, refreshToken, fetchImpl);
+  const invoices = [];
+  const seen = new Set();
+  let page = 1;
+  let hasMore = true;
+  while (hasMore && page <= SUMMARY_MAX_PAGES) {
+    const params = new URLSearchParams({
+      organization_id: organizationId,
+      status: 'unpaid',
+      date_start: fromDate,
+      date_end: toDate,
+      page: String(page),
+      per_page: '200',
+    });
+    const url = `${hosts.api}/books/v3/invoices?${params}`;
+    assertAllowedUrl(url, zoho.dc, 'GET');
+    const response = await fetchImpl(url, {
+      method: 'GET',
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+    });
+    const text = await response.text();
+    const codeMatch = text.match(/"code"\s*:\s*(-?\d+)/);
+    const code = codeMatch ? Number(codeMatch[1]) : null;
+    if (!response.ok || (code !== null && code !== 0)) {
+      throw zohoFailure(zohoMessage(text, response.status, 'invoice'));
+    }
+    let data = {};
+    try { data = JSON.parse(text); } catch { data = {}; }
+    const rows = Array.isArray(data.invoices) ? data.invoices : [];
+    for (const row of rows) {
+      if (row && row.invoice_id != null && typeof row.invoice_id !== 'string') {
+        row.invoice_id = String(row.invoice_id);
+      }
+      if (row && row.customer_id != null && typeof row.customer_id !== 'string') {
+        row.customer_id = String(row.customer_id);
+      }
+      const mapped = mapReceivableInvoice(row);
+      if (!mapped || seen.has(mapped.invoiceId)) continue;
+      seen.add(mapped.invoiceId);
+      invoices.push(mapped);
+    }
+    const pageContext = data.page_context || {};
+    hasMore = pageContext.has_more_page === true || pageContext.has_more_page === 'true';
+    page += 1;
+    if (rows.length === 0) hasMore = false;
+  }
+  return { invoices, truncated: hasMore };
 }
 
 /**
