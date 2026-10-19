@@ -21,11 +21,11 @@ function invoice(overrides) {
   };
 }
 
-test('one row per customer, larger total first, integer sum only', () => {
+test('one outstanding total per customer, and one line per invoice', () => {
   const summary = buildReceivableSummary([
-    invoice({ invoiceId: '1', customerId: '10', customerName: 'Toko Alpha', balance: 1200000 }),
-    invoice({ invoiceId: '2', customerId: '10', customerName: 'Toko Alpha', balance: 300000, invoiceNumber: 'INV-OTHER' }),
-    invoice({ invoiceId: '3', customerId: '20', customerName: 'Toko Beta', balance: 2000000 }),
+    invoice({ invoiceId: '1', customerId: '10', customerName: 'Toko Alpha', balance: 1200000, date: '2026-10-08', invoiceNumber: 'INV-2' }),
+    invoice({ invoiceId: '2', customerId: '10', customerName: 'Toko Alpha', balance: 300000, invoiceNumber: 'INV-OTHER', date: '2026-10-02' }),
+    invoice({ invoiceId: '3', customerId: '20', customerName: 'Toko Beta', balance: 2000000, invoiceNumber: 'INV-BETA' }),
     invoice({ invoiceId: '4', date: '2026-09-30', customerId: '30', customerName: 'Too Early', balance: 999 }),
     invoice({ invoiceId: '5', date: '2026-11-01', customerId: '31', customerName: 'Too Late', balance: 999 }),
     invoice({ invoiceId: '6', customerId: '32', customerName: 'Toko Zero', balance: 0 }),
@@ -38,7 +38,8 @@ test('one row per customer, larger total first, integer sum only', () => {
   assert.equal(summary.customers[1].total, 1500000);
   assert.equal(summary.grandTotal, 3500000);
   assert.equal(summary.invoiceCount, 3);
-  assert.equal(JSON.stringify(summary).includes('INV-SECRET-99'), false);
+  assert.deepEqual(summary.lines.map((line) => line.invoiceNumber), ['INV-OTHER', 'INV-2', 'INV-BETA']);
+  assert.equal(summary.lines[0].transactionType, 'Invoice');
 });
 
 test('a customer name keeps only that customer', () => {
@@ -61,20 +62,33 @@ function pdfWords(bytes) {
   return parts.join('');
 }
 
-test('the PDF is one file of customer totals and does not print invoice numbers', async () => {
+test('the PDF lists each invoice in the Zoho receivable summary columns', async () => {
   const summary = buildReceivableSummary([
-    invoice({ balance: 1200000 }),
-    invoice({ invoiceId: '2', balance: 300000, invoiceNumber: 'INV-SECRET-99' }),
-  ], range);
+    invoice({
+      balance: 765000,
+      invoiceTotal: 765000,
+      invoiceNumber: 'INV-075660',
+      date: '2026-09-02',
+      createdTime: '13/09/2026 05:29 PM',
+      status: 'overdue',
+      customerName: 'OMNI Gym',
+    }),
+    invoice({ invoiceId: '2', balance: 300000, invoiceNumber: 'INV-OTHER', date: '2026-09-04' }),
+  ], { from: '2026-09-01', to: '2026-09-30' });
   const bytes = await renderReceivableSummaryPdf({
-    ...summary, ...range, asOf: '2026-10-17',
+    ...summary, from: '2026-09-01', to: '2026-09-30',
   }, { compress: false });
   const text = pdfWords(bytes);
   assert.equal(bytes.subarray(0, 5).toString(), '%PDF-');
+  assert.match(text, /Jaan Water/);
   assert.match(text, /Receivable Summary/);
-  assert.match(text, /Toko Alpha/);
-  assert.match(text, /Rp 1\.500\.000/);
-  assert.equal(text.includes('INV-SECRET-99'), false);
+  assert.match(text, /From 01\/09\/2026 To 30\/09\/2026/);
+  assert.match(text, /Transaction#/);
+  assert.match(text, /Balance \(BCY\)/);
+  assert.match(text, /INV-075660/);
+  assert.match(text, /Overdue/);
+  assert.match(text, /IDR765,000\.00/);
+  assert.match(text, /IDR1,065,000\.00/);
 });
 
 const env = {

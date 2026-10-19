@@ -168,11 +168,17 @@ test('receivable invoice mapper keeps the date, phone and integer balance', () =
     customer_phone: '+62 812-000',
     date: '2026-10-02',
     due_date: '2026-10-09',
+    created_time: '2026-09-13T17:29:00+0800',
+    reference_number: 'PO-1',
     status: 'sent',
+    total: 200000,
     balance: 150000,
     currency_code: 'IDR',
   });
   assert.equal(mapped.balance, 150000);
+  assert.equal(mapped.invoiceTotal, 200000);
+  assert.equal(mapped.referenceNumber, 'PO-1');
+  assert.equal(mapped.createdTime, '13/09/2026 05:29 PM');
   assert.equal(mapped.date, '2026-10-02');
   assert.equal(mapped.customerPhone, '62812000');
   assert.equal(mapReceivableInvoice({

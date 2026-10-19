@@ -99,7 +99,7 @@ export default function ReceivableSummary() {
     <section className="card followup-summary">
       <h2>Receivable summary</h2>
       <p className="hint">
-        Separate from the reminder list. One PDF grouped by customer. Each row is the outstanding total. Invoice lines and credit notes are not included.
+        Separate from the reminder list. One PDF of unpaid invoices, with the same columns as the Zoho receivable summary. Credit notes are not included.
       </p>
       <div className="filters">
         <label className="filter-field">

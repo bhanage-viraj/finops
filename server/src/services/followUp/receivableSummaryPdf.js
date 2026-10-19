@@ -2,7 +2,7 @@ import PDFDocument from 'pdfkit';
 import Setting from '../../models/Setting.js';
 import { listUnpaidInvoicesInRange, missingZohoConfig } from '../../integrations/erp/zohoBooks.js';
 import { writeAudit } from '../audit/auditLogger.js';
-import { formatDueDateId, formatRupiahText } from './rank.js';
+import { formatDueDateId } from './rank.js';
 import { httpError } from '../../utils/http.js';
 
 function cleanDay(value) {
@@ -17,21 +17,32 @@ function customerMatches(name, query) {
 }
 
 /** Helvetica only covers WinAnsi. Drop other characters so one name cannot fail the file. */
-function pdfSafe(value) {
-  const text = String(value || '')
+function pdfPlain(value) {
+  return String(value || '')
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\x20-\x7E]/g, '')
     .trim();
-  return text || 'Customer';
+}
+
+function pdfSafe(value) {
+  return pdfPlain(value) || 'Customer';
+}
+
+function statusLabel(status) {
+  const text = String(status || '').toLowerCase();
+  if (text === 'partially_paid') return 'Partially Paid';
+  if (!text) return '';
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /**
- * One row per customer: outstanding total only. Invoice lines stay out of the result.
+ * Invoice rows for the receivable summary, plus one outstanding total per customer
+ * so WhatsApp still sends a single balance.
  */
 export function buildReceivableSummary(invoices, { from = '', to = '', customer = '' } = {}) {
   const groups = new Map();
-  let invoiceCount = 0;
+  const lines = [];
   for (const invoice of invoices || []) {
     if (!invoice || !Number.isInteger(invoice.balance) || invoice.balance <= 0) continue;
     if (invoice.currency && invoice.currency !== 'IDR') continue;
@@ -41,6 +52,7 @@ export function buildReceivableSummary(invoices, { from = '', to = '', customer 
     if (from && invoice.date < from) continue;
     if (to && invoice.date > to) continue;
     if (!customerMatches(invoice.customerName, customer)) continue;
+    const invoiceTotal = Number.isInteger(invoice.invoiceTotal) ? invoice.invoiceTotal : invoice.balance;
     const key = invoice.customerId
       ? `id:${invoice.customerId}`
       : `name:${String(invoice.customerName || '').trim().toLowerCase() || 'unknown'}`;
@@ -54,14 +66,30 @@ export function buildReceivableSummary(invoices, { from = '', to = '', customer 
     const group = groups.get(key);
     group.total += invoice.balance;
     if (!group.customerPhone && invoice.customerPhone) group.customerPhone = invoice.customerPhone;
-    invoiceCount += 1;
+    lines.push({
+      createdTime: invoice.createdTime || '',
+      customerName: invoice.customerName || 'Unknown customer',
+      date: invoice.date,
+      invoiceNumber: invoice.invoiceNumber || '',
+      referenceNumber: invoice.referenceNumber || '',
+      status: statusLabel(status),
+      transactionType: 'Invoice',
+      invoiceTotal,
+      balance: invoice.balance,
+    });
   }
+  lines.sort((a, b) => {
+    const name = a.customerName.localeCompare(b.customerName);
+    if (name !== 0) return name;
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return String(a.invoiceNumber).localeCompare(String(b.invoiceNumber));
+  });
   const customers = [...groups.values()].sort((a, b) => {
     if (b.total !== a.total) return b.total - a.total;
     return a.customerName.localeCompare(b.customerName);
   });
   const grandTotal = customers.reduce((sum, row) => sum + row.total, 0);
-  return { customers, grandTotal, invoiceCount };
+  return { customers, lines, grandTotal, invoiceCount: lines.length };
 }
 
 export function summaryFileName(customers, customerQuery) {
@@ -72,70 +100,121 @@ export function summaryFileName(customers, customerQuery) {
   return 'Receivable-Summary.pdf';
 }
 
-function drawRow(doc, nameX, amountX, nameWidth, amountWidth, name, amount, bold) {
-  const y = doc.y;
-  doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor('#16201D');
-  const nameHeight = doc.heightOfString(name, { width: nameWidth });
-  const amountHeight = doc.heightOfString(amount, { width: amountWidth });
-  doc.text(name, nameX, y, { width: nameWidth, height: nameHeight });
-  doc.text(amount, amountX, y, { width: amountWidth, align: 'right', height: amountHeight });
-  doc.y = y + Math.max(nameHeight, amountHeight) + 6;
+/** Same money text as the Zoho receivable summary: IDR765,000.00 */
+function formatIdr(amount) {
+  if (!Number.isInteger(amount)) return '';
+  return `IDR${amount.toLocaleString('en-US')}.00`;
 }
 
-/** pdfkit is the server's PDF writer. Zoho does not return this report. */
+const COLUMNS = [
+  { key: 'createdTime', title: 'Created Time', width: 74 },
+  { key: 'customerName', title: 'Customer Name', width: 80 },
+  { key: 'date', title: 'Date', width: 48 },
+  { key: 'invoiceNumber', title: 'Transaction#', width: 58 },
+  { key: 'referenceNumber', title: 'Reference#', width: 48 },
+  { key: 'status', title: 'Status', width: 52 },
+  { key: 'transactionType', title: 'Transaction Type', width: 56 },
+  { key: 'invoiceTotal', title: 'Total (BCY)', width: 64, money: true },
+  { key: 'invoiceTotal', title: 'Total (FCY)', width: 64, money: true },
+  { key: 'balance', title: 'Balance (BCY)', width: 68, money: true },
+  { key: 'balance', title: 'Balance (FCY)', width: 68, money: true },
+  { key: 'balance', title: 'Total', width: 64, money: true },
+];
+
+function cellText(line, column) {
+  if (column.money) return formatIdr(line[column.key]);
+  if (column.key === 'date') return formatDueDateId(line.date);
+  if (column.key === 'customerName') return pdfSafe(line.customerName);
+  return pdfPlain(line[column.key] || '');
+}
+
+function drawCells(doc, y, left, values, bold) {
+  doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(7).fillColor('#16201D');
+  let height = 9;
+  values.forEach((value, index) => {
+    height = Math.max(height, doc.heightOfString(value, { width: COLUMNS[index].width - 4 }));
+  });
+  let x = left;
+  values.forEach((value, index) => {
+    const column = COLUMNS[index];
+    doc.text(value, x + 2, y, {
+      width: column.width - 4,
+      height,
+      align: column.money ? 'right' : 'left',
+    });
+    x += column.width;
+  });
+  return y + height + 3;
+}
+
+/** pdfkit draws the receivable summary. Zoho does not return this report as a file. */
 export function renderReceivableSummaryPdf(summary, { compress = true } = {}) {
-  const doc = new PDFDocument({ size: 'A4', margin: 48, compress });
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 28, compress });
   const done = new Promise((resolve, reject) => {
     const chunks = [];
     doc.on('data', (chunk) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
   });
-  const nameX = doc.page.margins.left;
-  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const amountWidth = 140;
-  const nameWidth = pageWidth - amountWidth - 12;
-  const amountX = nameX + pageWidth - amountWidth;
+  const left = doc.page.margins.left;
+  const width = COLUMNS.reduce((sum, column) => sum + column.width, 0);
 
-  doc.font('Helvetica-Bold').fontSize(16).fillColor('#16201D').text('Receivable Summary');
-  doc.moveDown(0.3);
-  doc.font('Helvetica').fontSize(10).fillColor('#4F5B57');
-  doc.text(`From ${formatDueDateId(summary.from)} to ${formatDueDateId(summary.to)}`);
-  doc.text(`As of ${formatDueDateId(summary.asOf)}`);
-  doc.text('Grouped by customer. Each row is the total still to pay. Invoice lines and credit notes are not included.');
-  doc.moveDown(0.8);
+  function title() {
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#16201D').text('Jaan Water', left, doc.y, {
+      width, align: 'center',
+    });
+    doc.font('Helvetica-Bold').fontSize(12).text('Receivable Summary', { width, align: 'center' });
+    doc.font('Helvetica').fontSize(9).text(
+      `From ${formatDueDateId(summary.from)} To ${formatDueDateId(summary.to)}`,
+      { width, align: 'center' },
+    );
+    doc.moveDown(0.6);
+  }
 
   function header() {
-    drawRow(doc, nameX, amountX, nameWidth, amountWidth, 'Customer', 'Outstanding', true);
-    doc.moveTo(nameX, doc.y).lineTo(nameX + pageWidth, doc.y).strokeColor('#E1E5E3').stroke();
-    doc.moveDown(0.4);
+    const y = doc.y;
+    doc.save();
+    doc.rect(left, y - 2, width, 14).fill('#F3F4F3');
+    doc.restore();
+    doc.y = drawCells(doc, y, left, COLUMNS.map((column) => column.title), true);
+    doc.moveTo(left, doc.y).lineTo(left + width, doc.y).strokeColor('#D5DBD8').stroke();
+    doc.y += 3;
   }
-  header();
 
-  if (!summary.customers.length) {
-    doc.font('Helvetica').fontSize(10).fillColor('#16201D').text('No outstanding balances in this range.');
-    doc.moveDown(0.4);
+  title();
+  header();
+  const lines = summary.lines || [];
+  if (!lines.length) {
+    doc.font('Helvetica').fontSize(9).fillColor('#16201D').text('No outstanding balances in this range.');
   }
-  for (const row of summary.customers) {
-    if (doc.y > doc.page.height - 90) {
+  for (const line of lines) {
+    if (doc.y > doc.page.height - 48) {
       doc.addPage();
       header();
     }
-    drawRow(
-      doc,
-      nameX,
-      amountX,
-      nameWidth,
-      amountWidth,
-      pdfSafe(row.customerName),
-      formatRupiahText(row.total),
-      false,
-    );
+    doc.y = drawCells(doc, doc.y, left, COLUMNS.map((column) => cellText(line, column)), false);
   }
-  doc.moveDown(0.2);
-  doc.moveTo(nameX, doc.y).lineTo(nameX + pageWidth, doc.y).strokeColor('#E1E5E3').stroke();
-  doc.moveDown(0.4);
-  drawRow(doc, nameX, amountX, nameWidth, amountWidth, 'Total', formatRupiahText(summary.grandTotal), true);
+  if (lines.length) {
+    doc.moveDown(0.2);
+    doc.moveTo(left, doc.y).lineTo(left + width, doc.y).strokeColor('#D5DBD8').stroke();
+    doc.moveDown(0.3);
+    const totalLine = {
+      createdTime: '',
+      customerName: 'Total',
+      date: '',
+      invoiceNumber: '',
+      referenceNumber: '',
+      status: '',
+      transactionType: '',
+      invoiceTotal: lines.reduce((sum, line) => sum + line.invoiceTotal, 0),
+      balance: summary.grandTotal,
+    };
+    doc.y = drawCells(doc, doc.y, left, COLUMNS.map((column) => {
+      if (column.key === 'customerName') return 'Total';
+      if (!column.money) return '';
+      return cellText(totalLine, column);
+    }), true);
+  }
   doc.end();
   return done;
 }

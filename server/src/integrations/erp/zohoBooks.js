@@ -292,9 +292,29 @@ export function mapUnpaidInvoiceForMatching(row) {
   };
 }
 
+function integerMoney(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  const rounded = Math.round(amount);
+  if (Math.abs(amount - rounded) > 0.01) return null;
+  return rounded;
+}
+
+/** Zoho created_time is an ISO stamp. Show the clock time already in that stamp. */
+function formatCreatedTime(value) {
+  const match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!match) return '';
+  const [, year, month, day, hourText, minute] = match;
+  let hour = Number(hourText);
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  hour %= 12;
+  if (hour === 0) hour = 12;
+  return `${day}/${month}/${year} ${String(hour).padStart(2, '0')}:${minute} ${suffix}`;
+}
+
 /**
- * Unpaid invoice for the receivable summary. Keeps the invoice date and phone
- * so the report can group by customer without printing each invoice.
+ * Unpaid invoice for the receivable summary. Keeps the fields the Zoho
+ * receivable summary prints on each invoice row.
  */
 export function mapReceivableInvoice(row) {
   if (!row || typeof row !== 'object') return null;
@@ -304,24 +324,25 @@ export function mapReceivableInvoice(row) {
   if (['paid', 'void', 'draft'].includes(status)) return null;
   const currency = String(row.currency_code || row.currency_symbol || 'IDR').toUpperCase();
   if (currency && currency !== 'IDR' && currency !== 'RP') return null;
-  const balanceRaw = row.balance ?? row.total;
-  const balanceNum = Number(balanceRaw);
-  if (!Number.isFinite(balanceNum) || balanceNum <= 0) return null;
-  const balance = Math.round(balanceNum);
-  if (Math.abs(balanceNum - balance) > 0.01) return null;
+  const balance = integerMoney(row.balance ?? row.total);
+  if (!Number.isInteger(balance) || balance <= 0) return null;
   const date = String(row.date || '');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   const dueDate = String(row.due_date || '');
   const phone = String(row.customer_phone || row.phone || '').replace(/\D/g, '');
+  const invoiceTotal = integerMoney(row.total);
   return {
     invoiceId,
     invoiceNumber: String(row.invoice_number || '').slice(0, 80),
+    referenceNumber: String(row.reference_number || '').trim().slice(0, 80),
     customerId: customerIdFrom(row.customer_id),
     customerName: String(row.customer_name || '').trim().slice(0, 120),
     customerPhone: phone.slice(0, 20),
     date,
+    createdTime: formatCreatedTime(row.created_time),
     dueDate: /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : '',
     status,
+    invoiceTotal: Number.isInteger(invoiceTotal) ? invoiceTotal : balance,
     balance,
     currency: 'IDR',
   };
