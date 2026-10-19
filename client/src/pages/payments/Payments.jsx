@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { fetchOpenInvoices, fetchPayments, uploadPayments } from '../../api/payments.js';
+import {
+  fetchInvoiceSync, fetchOpenInvoices, fetchPayments, startInvoiceSync, uploadPayments,
+} from '../../api/payments.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { compressImage } from '../../utils/compressImage.js';
@@ -40,6 +42,64 @@ function invoiceLabel(payment) {
   const paid = (payment.allocations || []).filter((row) => row.applied > 0);
   if (paid.length > 1) return `${paid[0].invoiceNo} +${paid.length - 1}`;
   return payment.invoice?.invoiceNo || '—';
+}
+
+function syncLabel(sync) {
+  if (!sync) return 'Copying unpaid invoices from Zoho into the app.';
+  if (sync.running && !sync.lastFullOkAt) return 'Loading unpaid invoices from Zoho into the app…';
+  const count = Number.isInteger(sync.openCount) ? sync.openCount.toLocaleString('id-ID') : '0';
+  const when = formatWhen(sync.lastChangesRunAt || sync.lastFullOkAt);
+  if (sync.running) return `${count} unpaid invoices stored. Reading Zoho again…`;
+  if (sync.lastError) return `Unpaid invoice copy failed (${sync.lastError}). Last ok: ${when}.`;
+  if (sync.lastFullOkAt) return `${count} unpaid invoices stored. Last update ${when}.`;
+  return 'Unpaid invoices have not been copied from Zoho yet.';
+}
+
+function InvoiceSyncLine() {
+  const [sync, setSync] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  function load() {
+    fetchInvoiceSync()
+      .then((body) => {
+        setSync(body.sync || null);
+        setError('');
+      })
+      .catch((err) => setError(err.message));
+  }
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, sync?.running ? 4000 : 30000);
+    return () => clearInterval(timer);
+  }, [sync?.running]);
+
+  async function onSync() {
+    setBusy(true);
+    setError('');
+    try {
+      const body = await startInvoiceSync();
+      setSync(body.sync || null);
+    } catch (err) {
+      setError(err.message || 'Could not start a Zoho invoice sync.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="invoice-sync">
+      <p className="hint">{syncLabel(sync)}</p>
+      {sync?.lastFullTruncated && (
+        <p className="message message-warn">Zoho has more unpaid invoices than the last full copy held.</p>
+      )}
+      {error && <p className="message message-bad">{error}</p>}
+      <button type="button" className="btn btn-secondary" disabled={busy || sync?.running} onClick={onSync}>
+        {busy || sync?.running ? 'Syncing…' : 'Sync now'}
+      </button>
+    </div>
+  );
 }
 
 function rowLabel(payment) {
@@ -220,6 +280,7 @@ export default function Payments() {
     <>
       <div className="page-head">
         <h1>Payments</h1>
+        {canWarm && <InvoiceSyncLine />}
       </div>
 
       <section

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
-  approve, detail, file, hints, list, match, openInvoices, reject, remove, uploadPayments, verify,
+  approve, detail, file, hints, invoiceSync, invoiceSyncStatus, list, match, openInvoices, reject, remove,
+  uploadPayments, verify,
 } from '../controllers/payments.controller.js';
 import { requireAuth } from '../middleware/auth.js';
 import { killSwitch } from '../middleware/killSwitch.js';
@@ -17,6 +18,8 @@ export function createPaymentsRouter(env) {
   // Zoho invoice list and Payments Received create require the kill switch.
   // Documents (expenses) and Follow-up are separate routers — untouched here.
   router.get('/invoices/open', accountant, killSwitch, openInvoices(env));
+  router.get('/invoices/sync', accountant, killSwitch, invoiceSyncStatus());
+  router.post('/invoices/sync', accountant, killSwitch, invoiceSync(env));
   router.get('/', list());
   router.post('/', staff, upload, uploadPayments(env));
   router.get('/:id/file', file(env));

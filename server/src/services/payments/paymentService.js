@@ -1,10 +1,9 @@
 import BankPayment from '../../models/BankPayment.js';
 import Setting from '../../models/Setting.js';
+import { createCustomerPayment, missingZohoConfig } from '../../integrations/erp/zohoBooks.js';
 import {
-  createCustomerPayment,
-  listUnpaidInvoicesForMatching,
-  missingZohoConfig,
-} from '../../integrations/erp/zohoBooks.js';
+  ensureInvoiceStore, openInvoicesForMatching, refreshCustomerInvoices,
+} from '../zohoInvoices/invoiceStore.js';
 import { readPaymentScreenshot } from '../ai/paymentReader.js';
 import { writeAudit } from '../audit/auditLogger.js';
 import { classifyAmountFit, matchPayment } from '../matching/matcher.js';
@@ -229,44 +228,24 @@ async function requireZohoReady(env) {
   return { refreshToken, settings };
 }
 
-const ZOHO_INVOICE_FRESH_MS = 3 * 60 * 1000;
-// Older than fresh but younger than this: answer at once, refresh in the background.
-// Safe because Zoho itself refuses a payment larger than the real balance.
-const ZOHO_INVOICE_STALE_MS = 15 * 60 * 1000;
-let zohoInvoiceCache = { at: 0, orgId: '', invoices: null };
-let zohoInvoiceInFlight = null;
-
-function fetchZohoInvoices(env, refreshToken, orgId) {
-  // Several uploads at once share one Zoho pull.
-  if (!zohoInvoiceInFlight) {
-    zohoInvoiceInFlight = listUnpaidInvoicesForMatching({ zoho: env.zoho, refreshToken })
-      .then((invoices) => {
-        zohoInvoiceCache = { at: Date.now(), orgId, invoices };
-        return invoices;
-      })
-      .finally(() => { zohoInvoiceInFlight = null; });
-  }
-  return zohoInvoiceInFlight;
+/**
+ * Every unpaid invoice from the MongoDB copy of Zoho (all pages, not a capped slice).
+ * Safe if a balance is a few minutes old: Zoho refuses a payment larger than the real balance.
+ */
+async function loadZohoInvoices(env) {
+  await requireZohoReady(env);
+  await ensureInvoiceStore(env);
+  return openInvoicesForMatching();
 }
 
-/** In-memory cache so upload/match/search do not re-pull Zoho every time. */
-async function loadZohoInvoices(env, { force = false } = {}) {
-  const { refreshToken } = await requireZohoReady(env);
-  const orgId = String(env.zoho?.organizationId || '');
-  const age = Date.now() - zohoInvoiceCache.at;
-  const usable = zohoInvoiceCache.invoices && zohoInvoiceCache.orgId === orgId;
-  if (!force && usable && age < ZOHO_INVOICE_FRESH_MS) return zohoInvoiceCache.invoices;
-  if (!force && usable && age < ZOHO_INVOICE_STALE_MS) {
-    fetchZohoInvoices(env, refreshToken, orgId).catch((error) => {
-      console.error('Background Zoho invoice refresh failed', error.message);
-    });
-    return zohoInvoiceCache.invoices;
-  }
-  return fetchZohoInvoices(env, refreshToken, orgId);
-}
-
-export function clearZohoInvoiceCache() {
-  zohoInvoiceCache = { at: 0, orgId: '', invoices: null };
+/** Match, then re-read the matched customer from Zoho and match again if their invoices changed. */
+async function matchWithFreshCustomer(payment, invoices, env) {
+  const match = await matchPayment({ ...matchInputs(payment), invoices });
+  const customerId = match.matchedCustomerId ? String(match.matchedCustomerId) : '';
+  if (!customerId) return match;
+  const fresh = await refreshCustomerInvoices(env, customerId);
+  if (!fresh?.changed) return match;
+  return matchPayment({ ...matchInputs(payment), invoices: await openInvoicesForMatching() });
 }
 
 function applyMatchResult(payment, match) {
@@ -370,7 +349,7 @@ async function rematchPaymentDoc(payment, env) {
     payment.status = payment.statementVerified ? 'verified' : 'read';
     return;
   }
-  const match = await matchPayment({ ...matchInputs(payment), invoices: zohoInvoices });
+  const match = await matchWithFreshCustomer(payment, zohoInvoices, env);
   applyMatchResult(payment, match);
   if (payment.statementVerified && payment.zohoInvoiceId) {
     payment.status = 'verified';
@@ -460,8 +439,10 @@ export async function processPayment(id, env) {
       // Still load every unpaid invoice for this customer for the tick list.
       if (zohoOutcome.status === 'fulfilled' && latest.zohoCustomerId) {
         const cid = String(latest.zohoCustomerId);
+        const fresh = await refreshCustomerInvoices(env, cid);
+        const rows = fresh?.changed ? await openInvoicesForMatching() : zohoOutcome.value;
         latest.matchCandidates = sortOldestFirst(
-          zohoOutcome.value.filter((row) => String(row.customerId) === cid && Number(row.remaining) > 0),
+          rows.filter((row) => String(row.customerId) === cid && Number(row.remaining) > 0),
         ).map((row) => ({
           invoiceId: row.invoiceId,
           invoiceNo: row.invoiceNo || row.invoiceNumber,
@@ -493,7 +474,7 @@ export async function processPayment(id, env) {
         latest.status = 'read';
       } else {
         // WhatsApp caption (confirmed.customerName) beats bank sender name.
-        const match = await matchPayment({ ...matchInputs(latest), invoices: zohoInvoices });
+        const match = await matchWithFreshCustomer(latest, zohoInvoices, env);
         applyMatchResult(latest, match);
       }
     }
@@ -897,7 +878,8 @@ export async function approvePayment(id, user, body = {}, env) {
   payment.approvedBy = user.id;
   payment.approvedAt = new Date();
   await payment.save();
-  clearZohoInvoiceCache();
+  // The recorded payment changes these balances in Zoho; read the customer again now.
+  await refreshCustomerInvoices(env, payment.zohoCustomerId, { force: true });
 
   await writeAudit({
     userId: user.id,
@@ -1020,8 +1002,13 @@ export function selectOpenInvoices(mapped, search = '', { customerId = '' } = {}
  * With a keyword: name / invoice# matches, best name first, oldest invoice first.
  */
 export async function listOpenInvoices(env, search = '', { customerId = '' } = {}) {
-  const invoices = await loadZohoInvoices(env);
-  return selectOpenInvoices(invoices.map(mapOpenInvoiceRow), search, { customerId });
+  const cid = String(customerId || '').trim();
+  let invoices = await loadZohoInvoices(env);
+  // One customer's tick list: read that customer from Zoho first (throttled to every 2 minutes).
+  if (cid && (await refreshCustomerInvoices(env, cid))?.changed) {
+    invoices = await openInvoicesForMatching();
+  }
+  return selectOpenInvoices(invoices.map(mapOpenInvoiceRow), search, { customerId: cid });
 }
 
 export function fileKeyFor(payment) {

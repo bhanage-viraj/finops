@@ -3,8 +3,9 @@ import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
   assertAllowedUrl, authorizationUrl, clearZohoTokenCache, createCustomerPayment, createExpense,
-  createOauthState, exchangeAuthCode, getInvoicePdf, listOverdueInvoices, listUnpaidInvoicesInRange,
-  mapOverdueInvoice, mapReceivableInvoice, mapUnpaidInvoiceForMatching, missingZohoConfig, receiptExtension, verifyOauthState,
+  createOauthState, exchangeAuthCode, getInvoicePdf, listInvoicePages, listOverdueInvoices, listUnpaidInvoicesInRange,
+  mapOverdueInvoice, mapReceivableInvoice, mapStoredInvoice, mapUnpaidInvoiceForMatching, missingZohoConfig,
+  receiptExtension, verifyOauthState, zohoTimeMs, zohoTimeParam,
   ZOHO_CUSTOMER_PAYMENT_SCOPE, ZOHO_OAUTH_SCOPE,
 } from '../src/integrations/erp/zohoBooks.js';
 import { receiptForZoho } from '../src/services/documents/zohoExpense.js';
@@ -50,6 +51,7 @@ test('the connect URL asks for expense create, invoice read, and customer paymen
 test('Zoho URLs allow expense, invoice list/PDF, and customer payment POST', () => {
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/expenses', 'in', 'POST'));
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices?status=overdue', 'in', 'GET'));
+  assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices?last_modified_time=2026-10-19T02:00:00%2B0000&customer_id=1', 'in', 'GET'));
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1&accept=pdf', 'in', 'GET'));
   assert.doesNotThrow(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/customerpayments', 'in', 'POST'));
   assert.throws(() => assertAllowedUrl('https://www.zohoapis.in/books/v3/invoices/982000000561001?organization_id=1', 'in', 'GET'), /customer payment|invoice PDF/);
@@ -508,4 +510,86 @@ test('the code exchange calls only the token endpoint', async () => {
   assert.equal(refresh, 'new-refresh');
   assert.equal(calls.length, 1);
   assert.equal(new URL(calls[0]).pathname, '/oauth/v2/token');
+});
+
+test('stored invoice mapper keeps open unpaid rows and closes paid ones', () => {
+  const mapped = mapStoredInvoice({
+    invoice_id: '9820000000000000009',
+    invoice_number: 'INV-9',
+    reference_number: 'PO-1',
+    customer_id: '9820000000000000011',
+    customer_name: 'Toko Contoh',
+    customer_phone: '081234',
+    date: '2026-08-01',
+    due_date: '2026-09-01',
+    status: 'overdue',
+    total: 200000,
+    balance: 150000,
+    currency_code: 'IDR',
+    invoice_url: 'https://books.zoho.in/app/1',
+    created_time: '2026-08-01T10:00:00+0800',
+    last_modified_time: '2026-10-19T10:15:00+0800',
+  });
+  assert.equal(mapped.invoiceId, '9820000000000000009');
+  assert.equal(mapped.balance, 150000);
+  assert.equal(mapped.open, true);
+  assert.equal(mapStoredInvoice({
+    invoice_id: '1', customer_id: '2', status: 'paid', balance: 0, total: 1000, currency_code: 'IDR',
+  }).open, false);
+  assert.equal(mapStoredInvoice({
+    invoice_id: '1', customer_id: '2', status: 'sent', balance: 10.5, currency_code: 'IDR',
+  }), null);
+});
+
+test('Zoho stamps parse to UTC milliseconds', () => {
+  assert.equal(zohoTimeMs('2026-10-19T10:15:00+0800'), Date.parse('2026-10-19T10:15:00+08:00'));
+  assert.equal(zohoTimeParam(new Date('2026-10-19T02:00:00.000Z')), '2026-10-19T02:00:00+0000');
+  assert.equal(zohoTimeMs('not-a-date'), null);
+});
+
+test('invoice page reader refuses unknown filters, retries 429, and honours stopWhen', async () => {
+  clearZohoTokenCache();
+  await assert.rejects(
+    () => listInvoicePages({ zoho, refreshToken: zoho.refreshToken, filters: { sort_column: 'created_time' } }),
+    /sort_column is not allowed/,
+  );
+
+  const sleeps = [];
+  let invoiceCalls = 0;
+  const fetchImpl = async (url) => {
+    if (String(url).includes('/oauth/v2/token')) return tokenResponse();
+    invoiceCalls += 1;
+    if (invoiceCalls === 1) return { ok: false, status: 429, text: async () => 'rate' };
+    const page = Number(new URL(String(url)).searchParams.get('page'));
+    assert.equal(new URL(String(url)).pathname, '/books/v3/invoices');
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        code: 0,
+        invoices: [{
+          invoice_id: String(page),
+          invoice_number: `INV-${page}`,
+          customer_id: '11',
+          customer_name: 'Toko',
+          date: '2026-10-01',
+          due_date: '2026-10-10',
+          status: 'sent',
+          total: 1000,
+          balance: 1000,
+          currency_code: 'IDR',
+          last_modified_time: '2026-10-19T10:15:00+0800',
+        }],
+        page_context: { has_more_page: page < 3 },
+      }),
+    };
+  };
+  const first = await listInvoicePages({
+    zoho, refreshToken: zoho.refreshToken, fetchImpl, sleep: async (ms) => { sleeps.push(ms); }, pauseMs: 0,
+    stopWhen: (rows) => rows.some((row) => row.invoiceId === '2'),
+  });
+  assert.deepEqual(sleeps, [15_000]);
+  assert.equal(first.stopped, true);
+  assert.equal(first.truncated, false);
+  assert.deepEqual(first.invoices.map((row) => row.invoiceId), ['1']);
 });

@@ -27,4 +27,10 @@ test('readEnv accepts the required values and defaults PORT to 4000', () => {
   assert.equal(env.mongodbUri, valid.MONGODB_URI);
   assert.equal(env.jwtSecret, valid.JWT_SECRET);
   assert.equal(env.clientUrl, valid.CLIENT_URL);
+  assert.equal(env.zoho.invoiceSync, true);
+});
+
+test('ZOHO_INVOICE_SYNC=off stops the background invoice copy', () => {
+  assert.equal(readEnv({ ...valid, ZOHO_INVOICE_SYNC: 'off' }).zoho.invoiceSync, false);
+  assert.equal(readEnv({ ...valid, ZOHO_INVOICE_SYNC: 'ON' }).zoho.invoiceSync, true);
 });

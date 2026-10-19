@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { connectDb } from './config/db.js';
 import { loadEnvFile, readEnv } from './config/env.js';
 import { recoverStuckDocuments } from './services/documents/pipeline.js';
+import { startInvoiceSync } from './services/zohoInvoices/syncSchedule.js';
 
 loadEnvFile();
 
@@ -25,3 +26,4 @@ const app = createApp(env);
 app.listen(env.port, '0.0.0.0', () => {
   console.log(`FinOps API listening on ${env.port}`);
 });
+startInvoiceSync(env);

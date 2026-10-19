@@ -455,6 +455,140 @@ export async function listUnpaidInvoicesInRange({
   return { invoices, truncated: hasMore };
 }
 
+/** Zoho stamps look like 2026-10-19T10:15:00+0800. Returns epoch ms, or null. */
+export function zohoTimeMs(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})([+-])(\d{2}):?(\d{2})$/);
+  const ms = Date.parse(match ? `${match[1]}T${match[2]}${match[3]}${match[4]}:${match[5]}` : text);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** Value for the last_modified_time filter, in UTC. */
+export function zohoTimeParam(date) {
+  return `${new Date(date).toISOString().slice(0, 19)}+0000`;
+}
+
+/**
+ * One invoice row for the stored copy in MongoDB. Paid, void and draft rows
+ * are kept with open = false so a changed invoice can be closed in the copy.
+ */
+export function mapStoredInvoice(row) {
+  if (!row || typeof row !== 'object') return null;
+  const invoiceId = invoiceIdFrom(row.invoice_id);
+  if (!invoiceId) return null;
+  const currency = String(row.currency_code || row.currency_symbol || 'IDR').toUpperCase();
+  if (currency && currency !== 'IDR' && currency !== 'RP') return null;
+  const balance = integerMoney(row.balance ?? row.total);
+  if (!Number.isInteger(balance)) return null;
+  const total = integerMoney(row.total);
+  const status = String(row.status || '').toLowerCase();
+  const date = String(row.date || '');
+  const dueDate = String(row.due_date || '');
+  const invoiceUrl = String(row.invoice_url || '').trim();
+  return {
+    invoiceId,
+    invoiceNumber: String(row.invoice_number || '').slice(0, 80),
+    referenceNumber: String(row.reference_number || '').trim().slice(0, 80),
+    customerId: customerIdFrom(row.customer_id),
+    customerName: String(row.customer_name || '').trim().slice(0, 120),
+    customerPhone: String(row.customer_phone || row.phone || '').replace(/\D/g, '').slice(0, 20),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '',
+    dueDate: /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : '',
+    status,
+    total: Number.isInteger(total) ? total : balance,
+    balance,
+    invoiceUrl: /^https:\/\//i.test(invoiceUrl) ? invoiceUrl.slice(0, 500) : '',
+    createdTime: String(row.created_time || '').slice(0, 40),
+    lastModifiedTime: String(row.last_modified_time || '').slice(0, 40),
+    open: balance > 0 && !['paid', 'void', 'draft'].includes(status),
+  };
+}
+
+const LIST_FILTERS = new Set(['status', 'customer_id', 'date_start', 'last_modified_time']);
+const RATE_LIMIT_RETRIES = 3;
+const STORE_MAX_PAGES = 400;
+
+function defaultSleep(ms) {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
+
+async function readInvoicePage({ fetchImpl, url, token, sleep }) {
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await fetchImpl(url, {
+      method: 'GET',
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+    });
+    const text = await response.text();
+    // Zoho allows about 100 calls a minute; wait and retry instead of losing the sync.
+    if (response.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+      await sleep(15_000 * 2 ** attempt);
+      continue;
+    }
+    const codeMatch = text.match(/"code"\s*:\s*(-?\d+)/);
+    const code = codeMatch ? Number(codeMatch[1]) : null;
+    if (!response.ok || (code !== null && code !== 0)) {
+      throw zohoFailure(zohoMessage(text, response.status, 'invoice'));
+    }
+    try { return JSON.parse(text); } catch { return {}; }
+  }
+}
+
+/**
+ * Read every page of the invoice list for the stored copy. Same read-only
+ * invoices URL as the other lists. stopWhen(pageInvoices) ends the read early.
+ */
+export async function listInvoicePages({
+  zoho, refreshToken, filters = {}, maxPages = STORE_MAX_PAGES, pauseMs = 0,
+  stopWhen = null, fetchImpl = fetch, sleep = defaultSleep,
+}) {
+  for (const key of Object.keys(filters)) {
+    if (!LIST_FILTERS.has(key)) throw zohoFailure(`The invoice list filter ${key} is not allowed.`);
+  }
+  const hosts = zohoHosts(zoho.dc);
+  const organizationId = String(zoho.organizationId || '');
+  if (!/^\d+$/.test(organizationId)) throw zohoFailure('ZOHO_ORGANIZATION_ID must be the numeric id from Zoho.');
+  const token = await accessToken(zoho, refreshToken, fetchImpl);
+  const invoices = [];
+  const seen = new Set();
+  let zohoRows = 0;
+  let page = 1;
+  let hasMore = true;
+  let stopped = false;
+  while (hasMore && page <= maxPages) {
+    const params = new URLSearchParams({
+      organization_id: organizationId,
+      ...filters,
+      page: String(page),
+      per_page: '200',
+    });
+    const url = `${hosts.api}/books/v3/invoices?${params}`;
+    assertAllowedUrl(url, zoho.dc, 'GET');
+    const data = await readInvoicePage({ fetchImpl, url, token, sleep });
+    const rows = Array.isArray(data.invoices) ? data.invoices : [];
+    zohoRows += rows.length;
+    const pageInvoices = [];
+    for (const row of rows) {
+      if (row && row.invoice_id != null && typeof row.invoice_id !== 'string') row.invoice_id = String(row.invoice_id);
+      if (row && row.customer_id != null && typeof row.customer_id !== 'string') row.customer_id = String(row.customer_id);
+      const mapped = mapStoredInvoice(row);
+      if (!mapped || seen.has(mapped.invoiceId)) continue;
+      seen.add(mapped.invoiceId);
+      pageInvoices.push(mapped);
+    }
+    if (stopWhen && stopWhen(pageInvoices)) {
+      stopped = true;
+      break;
+    }
+    invoices.push(...pageInvoices);
+    const pageContext = data.page_context || {};
+    hasMore = pageContext.has_more_page === true || pageContext.has_more_page === 'true';
+    if (rows.length === 0) hasMore = false;
+    page += 1;
+    if (hasMore && page <= maxPages && pauseMs > 0) await sleep(pauseMs);
+  }
+  return { invoices, zohoRows, truncated: hasMore && !stopped, stopped };
+}
+
 /**
  * Record a customer payment against one Zoho invoice.
  * Zoho marks the invoice paid or partially paid from amount_applied.

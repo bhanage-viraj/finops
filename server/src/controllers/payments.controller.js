@@ -13,6 +13,7 @@ import {
   updatePaymentHints,
   verifyPayment,
 } from '../services/payments/paymentService.js';
+import { invoiceStoreStatus, requestFullInvoiceSync } from '../services/zohoInvoices/invoiceStore.js';
 import { asyncHandler, httpError } from '../utils/http.js';
 
 export function uploadPayments(env) {
@@ -106,5 +107,17 @@ export function openInvoices(env) {
         customerId: req.query.customerId || '',
       }),
     });
+  });
+}
+
+export function invoiceSyncStatus() {
+  return asyncHandler(async (req, res) => {
+    res.json({ sync: await invoiceStoreStatus() });
+  });
+}
+
+export function invoiceSync(env) {
+  return asyncHandler(async (req, res) => {
+    res.status(202).json({ sync: await requestFullInvoiceSync(req.user, env) });
   });
 }

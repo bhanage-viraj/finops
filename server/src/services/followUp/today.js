@@ -1,6 +1,9 @@
 import Setting from '../../models/Setting.js';
-import { listOverdueInvoices, missingZohoConfig } from '../../integrations/erp/zohoBooks.js';
+import { missingZohoConfig } from '../../integrations/erp/zohoBooks.js';
 import { httpError } from '../../utils/http.js';
+import {
+  ensureInvoiceStore, overdueInvoicesFromStore, syncInvoiceChanges,
+} from '../zohoInvoices/invoiceStore.js';
 import {
   REMINDER_TEXT, draftCombinedWhatsAppMessage, draftWhatsAppMessage, groupOverdueByCustomer, rankOverdueInvoices,
 } from './rank.js';
@@ -29,6 +32,17 @@ async function loadOverdue(env, refreshToken, list, fresh) {
     },
   };
   return cache;
+}
+
+/** Reads the MongoDB copy of Zoho (every page), in the shape the live Zoho list returned. */
+function storeOverdueList(env, fresh) {
+  return async ({ stats }) => {
+    await ensureInvoiceStore(env);
+    if (fresh) await syncInvoiceChanges(env);
+    const result = await overdueInvoicesFromStore(new Date());
+    Object.assign(stats, { zohoRows: result.zohoRows, truncated: result.truncated });
+    return result.invoices;
+  };
 }
 
 function cleanDay(value) {
@@ -85,8 +99,9 @@ export async function todayFollowUp(user, env, query = {}, deps = {}) {
   if (missing.length) {
     throw httpError(400, `Zoho is not configured. Set ${missing.join(', ')}. Connect Zoho again if the token is missing.`);
   }
-  const list = deps.listOverdueInvoices || listOverdueInvoices;
-  const data = await loadOverdue(env, refreshToken, list, query.refresh === '1');
+  const fresh = query.refresh === '1';
+  const list = deps.listOverdueInvoices || storeOverdueList(env, fresh);
+  const data = await loadOverdue(env, refreshToken, list, fresh);
   const filtered = filterOverdue(data.invoices, query);
   const page = pageNumber(query.page);
   const base = {

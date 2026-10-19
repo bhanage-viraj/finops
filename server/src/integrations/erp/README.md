@@ -7,6 +7,7 @@
 - list overdue invoices (`GET /books/v3/invoices?status=overdue`) for Follow-up
 - list unpaid invoices (`GET /books/v3/invoices?status=unpaid`) for Payments matching
 - list unpaid invoices in a date range (`date_start` and `date_end` on that same invoices URL) for the receivable summary PDF
+- read every unpaid invoice into the stored copy in MongoDB (`zohoInvoices`), using that same invoices URL with `status`, `customer_id`, `date_start` or `last_modified_time`. A full read runs each night at 02:00 Bali time, changed invoices are read every 10 minutes, and one customer is read again when a payment for that customer is opened. Zoho stays the source of truth; the copy is read-only.
 - download one invoice PDF (`GET /books/v3/invoices/{id}?accept=pdf`)
 - create a customer payment (`POST /books/v3/customerpayments`) for Payments approve
 

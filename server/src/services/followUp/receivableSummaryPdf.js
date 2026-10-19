@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import Setting from '../../models/Setting.js';
-import { listUnpaidInvoicesInRange, missingZohoConfig } from '../../integrations/erp/zohoBooks.js';
+import { missingZohoConfig } from '../../integrations/erp/zohoBooks.js';
+import { ensureInvoiceStore, unpaidInvoicesInRange } from '../zohoInvoices/invoiceStore.js';
 import { writeAudit } from '../audit/auditLogger.js';
 import { formatDueDateId } from './rank.js';
 import { httpError } from '../../utils/http.js';
@@ -239,7 +240,10 @@ export async function receivableSummaryPdf(user, env, query = {}, deps = {}) {
   if (missing.length) {
     throw httpError(400, `Zoho is not configured. Set ${missing.join(', ')}. Connect Zoho again if the token is missing.`);
   }
-  const list = deps.listUnpaidInvoicesInRange || listUnpaidInvoicesInRange;
+  const list = deps.listUnpaidInvoicesInRange || (async (range) => {
+    await ensureInvoiceStore(env);
+    return unpaidInvoicesInRange(range);
+  });
   const result = await list({
     zoho: env.zoho,
     refreshToken,

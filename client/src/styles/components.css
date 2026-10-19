@@ -366,6 +366,16 @@ a.btn {
 .page-head h1 { margin: 0; }
 .page-head .title-row { margin: 0; }
 .page-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.invoice-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  max-width: 28rem;
+}
+.invoice-sync .hint,
+.invoice-sync .message { margin: 0; }
 .payment-shot {
   display: block;
   width: 100%;
@@ -801,7 +811,9 @@ label.btn.is-disabled {
   .followup-combined-list .btn { width: auto; }
   .actions.followup-view-toggle { flex-direction: row; }
   .followup-pager .btn,
-  .followup-count-row .btn { width: auto; }
+  .followup-count-row .btn,
+  .invoice-sync .btn { width: auto; }
+  .invoice-sync { max-width: 100%; justify-content: flex-start; }
   .followup-view-toggle .btn { width: auto; flex: 1; }
   .followup-customer-head > * { width: 100%; }
   .capture-card {

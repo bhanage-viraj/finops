@@ -54,6 +54,14 @@ export function fetchOpenInvoices(q = '', customerId = '') {
   return api(`/payments/invoices/open${suffix}`);
 }
 
+export function fetchInvoiceSync() {
+  return api('/payments/invoices/sync');
+}
+
+export function startInvoiceSync() {
+  return api('/payments/invoices/sync', { method: 'POST' });
+}
+
 export function fetchPaymentFile(id) {
   return apiFile(`/payments/${id}/file`);
 }
