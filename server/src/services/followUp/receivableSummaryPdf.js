@@ -3,14 +3,14 @@ import Setting from '../../models/Setting.js';
 import {
   getInvoiceJson, invoiceQtyAndDelivery, listInvoicesInDateRange, missingZohoConfig,
 } from '../../integrations/erp/zohoBooks.js';
-import { ensureInvoiceStore, unpaidInvoicesInRange } from '../zohoInvoices/invoiceStore.js';
+import { ensureInvoiceStore, saveInvoiceDetails, unpaidInvoicesInRange } from '../zohoInvoices/invoiceStore.js';
 import { writeAudit } from '../audit/auditLogger.js';
 import { formatDueDateId } from './rank.js';
 import { httpError } from '../../utils/http.js';
 
 export const SUMMARY_STATUS_OPTIONS = ['overdue', 'paid', 'draft'];
-const DETAIL_MAX = 40;
-const DETAIL_CONCURRENCY = 4;
+const LIVE_DETAIL_MAX = 80;
+const DETAIL_CONCURRENCY = 8;
 
 export function parseSummaryStatuses(raw) {
   const selected = [];
@@ -336,28 +336,35 @@ async function loadSummaryInvoices({ env, refreshToken, from, to, statuses, deps
 }
 
 async function fillQuantities(lines, { customer, env, refreshToken, deps }) {
-  if (!String(customer || '').trim()) return lines;
   const mockedList = Boolean(deps.listUnpaidInvoicesInRange || deps.listInvoicesInDateRange);
   const load = deps.getInvoiceJson || (mockedList ? null : getInvoiceJson);
-  if (!load) return lines;
-  const ids = [...new Set(lines.map((line) => line.invoiceId).filter((id) => /^\d+$/.test(id)))];
-  if (!ids.length || ids.length > DETAIL_MAX) return lines;
+  const save = deps.saveInvoiceDetails
+    || (deps.getInvoiceJson || mockedList ? null : saveInvoiceDetails);
+  if (!load || !String(customer || '').trim()) return lines;
+  const missing = [...new Set(
+    lines
+      .filter((line) => !Number.isInteger(line.quantity) && /^\d+$/.test(line.invoiceId))
+      .map((line) => line.invoiceId),
+  )].slice(0, LIVE_DETAIL_MAX);
+  if (!missing.length) return lines;
   const extras = new Map();
   let index = 0;
   async function worker() {
-    while (index < ids.length) {
-      const id = ids[index];
+    while (index < missing.length) {
+      const id = missing[index];
       index += 1;
       try {
         const detail = await load({ zoho: env.zoho, refreshToken, invoiceId: id });
-        extras.set(id, invoiceQtyAndDelivery(detail));
+        const extra = invoiceQtyAndDelivery(detail);
+        extras.set(id, extra);
+        if (save) await save(id, extra).catch(() => {});
       } catch {
-        // Keep the row without quantity rather than fail the whole PDF.
+        // Keep the stored quantity rather than fail the whole PDF.
       }
     }
   }
   await Promise.all(Array.from(
-    { length: Math.min(DETAIL_CONCURRENCY, ids.length) },
+    { length: Math.min(DETAIL_CONCURRENCY, missing.length) },
     () => worker(),
   ));
   return lines.map((line) => {

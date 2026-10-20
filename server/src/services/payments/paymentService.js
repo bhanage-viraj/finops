@@ -613,7 +613,10 @@ export async function getPayment(id, user, env = null) {
   if (!env || !customerId || closed) return dto;
 
   try {
-    dto.customerOpenInvoices = await listOpenInvoices(env, '', { customerId });
+    await ensureInvoiceStore(env);
+    dto.customerOpenInvoices = (await openInvoicesForCustomer(customerId)).map(mapOpenInvoiceRow);
+    // Refresh in the background so opening a payment is not blocked on Zoho.
+    refreshCustomerInvoices(env, customerId).catch(() => {});
   } catch (error) {
     // Fall back to matcher candidates; the UI still prefers those over amount-only allocations.
     dto.customerOpenInvoices = null;
@@ -941,6 +944,29 @@ export function customerSearchRank(query, customerName) {
   return score >= WEAK_NAME ? 3 - score : null;
 }
 
+/** INV-079837, INV 79837, or several numbers pasted together. */
+export function parseInvoiceNumbers(text) {
+  const found = [];
+  for (const match of String(text || '').matchAll(/\bINV[-\s]?(\d{3,})\b/gi)) {
+    const no = `INV-${match[1]}`;
+    if (!found.includes(no)) found.push(no);
+  }
+  return found;
+}
+
+function invoiceNoKey(value) {
+  return String(value || '').toLowerCase().replace(/[\s-]+/g, '');
+}
+
+function invoiceSearchRank(query, invoiceNo) {
+  const q = invoiceNoKey(query);
+  const no = invoiceNoKey(invoiceNo);
+  if (!q || !no) return null;
+  if (no === q || no === `inv${q}` || no.endsWith(q)) return 0;
+  if (no.includes(q)) return 1;
+  return null;
+}
+
 function mapOpenInvoiceRow(invoice) {
   return {
     id: invoice.invoiceId,
@@ -975,15 +1001,23 @@ export function selectOpenInvoices(mapped, search = '', { customerId = '' } = {}
   const q = String(search || '').trim();
   if (!q) return mapped.slice(0, 100);
 
+  const numbers = parseInvoiceNumbers(q);
+  if (numbers.length > 1) {
+    const want = new Set(numbers.map((no) => invoiceNoKey(no)));
+    return mapped.filter((row) => want.has(invoiceNoKey(row.invoiceNo)));
+  }
+
   const nameRanks = new Map();
-  const qInvoice = q.toLowerCase().replace(/\s+/g, '');
   const scored = [];
   for (const row of mapped) {
     if (!nameRanks.has(row.customerName)) {
       nameRanks.set(row.customerName, customerSearchRank(q, row.customerName));
     }
-    let rank = nameRanks.get(row.customerName);
-    if (rank == null && String(row.invoiceNo || '').toLowerCase().includes(qInvoice)) rank = 2;
+    const invRank = invoiceSearchRank(numbers[0] || q, row.invoiceNo);
+    const nameRank = nameRanks.get(row.customerName);
+    // Invoice number first so a Balinest payment can be ticked from the INV without the villa name.
+    let rank = invRank;
+    if (rank == null && nameRank != null) rank = nameRank + 2;
     if (rank == null) continue;
     scored.push({ row, rank });
   }
@@ -993,7 +1027,7 @@ export function selectOpenInvoices(mapped, search = '', { customerId = '' } = {}
     if (byName) return byName;
     return String(a.row.date || a.row.dueDate || '').localeCompare(String(b.row.date || b.row.dueDate || ''));
   });
-  return scored.slice(0, 40).map((entry) => entry.row);
+  return scored.slice(0, 80).map((entry) => entry.row);
 }
 
 /**
@@ -1003,11 +1037,16 @@ export function selectOpenInvoices(mapped, search = '', { customerId = '' } = {}
  */
 export async function listOpenInvoices(env, search = '', { customerId = '' } = {}) {
   const cid = String(customerId || '').trim();
-  // One customer: read that customer from Zoho now. Do not wait for the company-wide copy.
   if (cid) {
     await requireZohoReady(env);
-    await refreshCustomerInvoices(env, cid);
-    const invoices = await openInvoicesForCustomer(cid);
+    await ensureInvoiceStore(env);
+    let invoices = await openInvoicesForCustomer(cid);
+    if (!invoices.length) {
+      await refreshCustomerInvoices(env, cid, { force: true });
+      invoices = await openInvoicesForCustomer(cid);
+    } else {
+      refreshCustomerInvoices(env, cid).catch(() => {});
+    }
     return selectOpenInvoices(invoices.map(mapOpenInvoiceRow), '', { customerId: cid });
   }
   const invoices = await loadZohoInvoices(env);

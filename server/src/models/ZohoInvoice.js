@@ -18,6 +18,10 @@ const zohoInvoiceSchema = new mongoose.Schema({
   invoiceUrl: { type: String, default: '' },
   createdTime: { type: String, default: '' },
   lastModifiedTime: { type: String, default: '' },
+  // Line qty / delivery fee from a one-invoice Zoho read. List sync does not overwrite these.
+  quantity: { type: Number, default: null },
+  deliveryFee: { ...integerRupiahField(), default: null },
+  detailsFetchedAt: { type: Date, default: null },
   open: { type: Boolean, default: true },
   // Last time a Zoho read returned this invoice. Unseen open rows are closed after a full read.
   lastSeenAt: { type: Date, default: Date.now },
@@ -26,5 +30,6 @@ const zohoInvoiceSchema = new mongoose.Schema({
 zohoInvoiceSchema.index({ open: 1, customerId: 1 });
 zohoInvoiceSchema.index({ open: 1, date: 1 });
 zohoInvoiceSchema.index({ open: 1, lastSeenAt: 1 });
+zohoInvoiceSchema.index({ customerName: 1 });
 
 export default mongoose.model('ZohoInvoice', zohoInvoiceSchema);

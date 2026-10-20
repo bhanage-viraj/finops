@@ -230,7 +230,8 @@ export default function ReceivableSummary() {
       <h2>Receivable summary</h2>
       <p className="hint">
         Separate from the reminder list. Filter by status, pick a customer, preview, then download.
-        Quantity and delivery fee fill in when you select a customer. Credit notes are not included.
+        Quantity and delivery fee come from each invoice and are remembered for the next preview.
+        Credit notes are not included.
       </p>
       <div className="chips followup-summary-statuses" role="group" aria-label="Invoice status">
         {STATUS_OPTIONS.map((option) => (

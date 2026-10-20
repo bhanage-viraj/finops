@@ -405,9 +405,25 @@ export async function unpaidInvoicesInRange({ fromDate, toDate }) {
   const rows = await Invoice.find({ open: true, date: { $gte: fromDate, $lte: toDate } }).lean();
   const state = await loadSyncState();
   return {
-    invoices: rows.map((row) => mapReceivableInvoice(zohoRow(row))).filter(Boolean),
+    invoices: rows.map((row) => {
+      const mapped = mapReceivableInvoice(zohoRow(row));
+      if (!mapped) return null;
+      if (Number.isInteger(row.quantity)) mapped.quantity = row.quantity;
+      if (Number.isInteger(row.deliveryFee)) mapped.deliveryFee = row.deliveryFee;
+      return mapped;
+    }).filter(Boolean),
     truncated: state?.lastFullTruncated === true,
   };
+}
+
+/** Remember bottle qty and delivery fee so the next summary does not re-read Zoho. */
+export async function saveInvoiceDetails(invoiceId, extras = {}) {
+  const id = String(invoiceId || '').trim();
+  if (!/^\d+$/.test(id)) return;
+  const fields = { detailsFetchedAt: new Date() };
+  if (Number.isInteger(extras.quantity) || extras.quantity === null) fields.quantity = extras.quantity;
+  if (Number.isInteger(extras.deliveryFee) || extras.deliveryFee === null) fields.deliveryFee = extras.deliveryFee;
+  await Invoice.updateOne({ invoiceId: id }, { $set: fields });
 }
 
 export async function invoiceStoreStatus() {

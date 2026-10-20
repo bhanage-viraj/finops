@@ -47,6 +47,15 @@ function oldestFirst(a, b) {
   return byDay || String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
 }
 
+function parseInvoiceNumbers(text) {
+  const found = [];
+  for (const match of String(text || '').matchAll(/\bINV[-\s]?(\d{3,})\b/gi)) {
+    const no = `INV-${match[1]}`;
+    if (!found.includes(no)) found.push(no);
+  }
+  return found;
+}
+
 /** Merge open-invoice lists by id. First source wins for each invoice. */
 function mergeOpenInvoiceRows(...lists) {
   const byId = new Map();
@@ -233,24 +242,29 @@ export default function PaymentDetail() {
     if (fromDetail.length) {
       setCustomerInvoices(fromDetail);
       setLoadingInvoices(false);
-    } else {
-      const seeded = (payment?.candidates || [])
-        .filter((row) => !row.customerId || String(row.customerId) === String(matchedCustomerId))
-        .map((row) => ({
-          id: row.invoiceId,
-          invoiceNo: row.invoiceNo,
-          date: row.date || null,
-          dueDate: row.dueDate || null,
-          remaining: row.remaining,
-          erpCustomerId: row.customerId || matchedCustomerId,
-          customerName: row.customerName || '',
-        }))
-        .sort(oldestFirst);
-      if (seeded.length) setCustomerInvoices(seeded);
-      else setLoadingInvoices(true);
+      return undefined;
+    }
+
+    const seeded = (payment?.candidates || [])
+      .filter((row) => !row.customerId || String(row.customerId) === String(matchedCustomerId))
+      .map((row) => ({
+        id: row.invoiceId,
+        invoiceNo: row.invoiceNo,
+        date: row.date || null,
+        dueDate: row.dueDate || null,
+        remaining: row.remaining,
+        erpCustomerId: row.customerId || matchedCustomerId,
+        customerName: row.customerName || '',
+      }))
+      .sort(oldestFirst);
+    if (seeded.length) {
+      setCustomerInvoices(seeded);
+      setLoadingInvoices(false);
+      return undefined;
     }
 
     let cancelled = false;
+    setLoadingInvoices(true);
     fetchOpenInvoices('', matchedCustomerId)
       .then((body) => {
         if (cancelled) return;
@@ -305,13 +319,24 @@ export default function PaymentDetail() {
   }
 
   async function pickSuggestion(row) {
-    setQuery(row.customerName || '');
+    const numbers = parseInvoiceNumbers(query);
+    const sameCustomer = suggestions.filter((item) => (
+      String(item.erpCustomerId || item.customerId || '') === String(row.erpCustomerId || row.customerId || '')
+    ));
+    const wanted = numbers.length > 1
+      ? sameCustomer.filter((item) => numbers.includes(String(item.invoiceNo || '').toUpperCase()))
+      : [row];
+    const picked = wanted.length ? wanted : [row];
+    const ids = [...new Set(picked.map((item) => String(item.id || item.invoiceId)))];
+    setQuery(row.customerName || query);
     setShowSuggestions(false);
     setSuggestions([]);
     await run(async () => {
       await updatePaymentHints(id, { customerName: row.customerName || '' });
-      await matchPayment(id, { invoiceId: row.id });
-      setMessage('Customer matched.');
+      await matchPayment(id, ids.length > 1 ? { invoiceIds: ids } : { invoiceId: ids[0] });
+      setMessage(ids.length > 1
+        ? `${ids.length} invoices linked from the numbers you typed.`
+        : 'Invoice matched.');
     });
   }
 
@@ -560,7 +585,7 @@ export default function PaymentDetail() {
           {invoice && !closed && pickRows.length > 0 && (
             <div className="payment-invoice-pick">
               <div className="title-row">
-                <p className="field-label">All unpaid invoices for this customer</p>
+                <p className="field-label">Unpaid invoices — tick the ones this transfer pays</p>
                 {canFindCustomer && pickRows.length > 1 && (
                   <div className="actions payment-tick-tools">
                     <button
@@ -633,10 +658,10 @@ export default function PaymentDetail() {
             </div>
           )}
 
-          {canFindCustomer && !invoice && (
+          {canFindCustomer && (
             <div className="name-suggest">
               <label>
-                Find customer in Zoho
+                Find by invoice number
                 <input
                   value={query}
                   onChange={(event) => {
@@ -645,10 +670,14 @@ export default function PaymentDetail() {
                   }}
                   onFocus={() => setShowSuggestions(true)}
                   onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                  placeholder="Customer name from WhatsApp"
+                  placeholder="INV-079837, or a customer name"
                   autoComplete="off"
                 />
               </label>
+              <p className="hint">
+                Paste the invoice numbers you sent. For a group like Balinest, pick those invoices —
+                you do not need each villa name.
+              </p>
               {showSuggestions && query.trim().length >= 2 && (
                 <div>
                   {suggesting && <p className="hint">Searching…</p>}
@@ -662,9 +691,9 @@ export default function PaymentDetail() {
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => pickSuggestion(row)}
                           >
-                            <strong>{row.customerName || '—'}</strong>
+                            <strong>{row.invoiceNo || '—'}</strong>
                             <span className="hint">
-                              {row.invoiceNo} · {formatRupiah(row.remaining)}
+                              {row.customerName || '—'} · {formatRupiah(row.remaining)}
                             </span>
                           </button>
                         </li>
@@ -674,52 +703,6 @@ export default function PaymentDetail() {
                 </div>
               )}
             </div>
-          )}
-
-          {canFindCustomer && invoice && (
-            <details className="payment-change-customer">
-              <summary>Wrong customer? Change</summary>
-              <div className="name-suggest">
-                <label>
-                  Find customer
-                  <input
-                    value={query}
-                    onChange={(event) => {
-                      setQuery(event.target.value);
-                      setShowSuggestions(true);
-                    }}
-                    onFocus={() => setShowSuggestions(true)}
-                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                    placeholder="Customer name"
-                    autoComplete="off"
-                  />
-                </label>
-                {showSuggestions && query.trim().length >= 2 && (
-                  <div>
-                    {suggesting && <p className="hint">Searching…</p>}
-                    {!suggesting && suggestions.length === 0 && <p className="hint">No match</p>}
-                    {suggestions.length > 0 && (
-                      <ul className="name-suggest-list" role="listbox">
-                        {suggestions.map((row) => (
-                          <li key={row.id}>
-                            <button
-                              type="button"
-                              onMouseDown={(event) => event.preventDefault()}
-                              onClick={() => pickSuggestion(row)}
-                            >
-                              <strong>{row.customerName || '—'}</strong>
-                              <span className="hint">
-                                {row.invoiceNo} · {formatRupiah(row.remaining)}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-              </div>
-            </details>
           )}
 
           {canRecord && (

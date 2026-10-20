@@ -6,7 +6,7 @@ import { nameSimilarity } from '../src/services/matching/normalizeName.js';
 import { STRONG_NAME } from '../src/services/matching/rules.js';
 import { assertPaymentExtraction } from '../src/services/ai/schemas.js';
 import { resolveCaptionDate, splitCaption } from '../src/services/payments/captionHints.js';
-import { customerSearchRank, selectOpenInvoices } from '../src/services/payments/paymentService.js';
+import { customerSearchRank, parseInvoiceNumbers, selectOpenInvoices } from '../src/services/payments/paymentService.js';
 
 function noDuplicates(t) {
   const original = BankPayment.find;
@@ -227,4 +227,32 @@ test('open-invoice list by customerId returns every unpaid invoice, not only amo
   ]);
   // Same transfer amount appears on several invoices — all of them stay listed.
   assert.equal(forCustomer.filter((row) => row.remaining === 480000).length, 5);
+});
+
+test('invoice numbers find unpaid invoices without the villa customer name', () => {
+  assert.deepEqual(parseInvoiceNumbers('INV-079837 INV-079955'), ['INV-079837', 'INV-079955']);
+  const rows = [
+    ...sariBogaInvoices().map((inv) => ({
+      id: inv.invoiceId,
+      invoiceNo: inv.invoiceNo,
+      remaining: inv.remaining,
+      date: inv.date,
+      dueDate: inv.dueDate,
+      customerName: inv.customerName,
+      erpCustomerId: inv.customerId,
+    })),
+    {
+      id: 'villa',
+      invoiceNo: 'INV-088001',
+      remaining: 200000,
+      date: '2026-10-01',
+      dueDate: '2026-10-08',
+      customerName: 'Balinest Villa Kristi',
+      erpCustomerId: 'c-kristi',
+    },
+  ];
+  const byNumber = selectOpenInvoices(rows, 'INV-079837');
+  assert.equal(byNumber[0].invoiceNo, 'INV-079837');
+  const pasted = selectOpenInvoices(rows, 'INV-079837 INV-088001');
+  assert.deepEqual(pasted.map((row) => row.invoiceNo).sort(), ['INV-079837', 'INV-088001']);
 });
