@@ -5,6 +5,7 @@ import {
   importDeliveryDay,
   importDeliveryHistory,
   deleteDeliveryDay,
+  downloadDayExport,
 } from '../../api/deliveries.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 
@@ -69,6 +70,20 @@ export default function DeliveryDays() {
     } finally {
       setBusy(false);
       event.target.value = '';
+    }
+  }
+
+  async function onDownload(dayId) {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      await downloadDayExport(dayId);
+      setMessage('Excel downloaded. Each area is its own tab.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -164,6 +179,14 @@ export default function DeliveryDays() {
                     <td>{day.summary?.delivered ?? 0}</td>
                     <td className="sheet-actions">
                       <Link className="btn btn-primary btn-compact" to={`/deliver/${day._id}`}>Open</Link>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-compact"
+                        disabled={busy}
+                        onClick={() => onDownload(day._id)}
+                      >
+                        Download Excel
+                      </button>
                       <button
                         type="button"
                         className="btn btn-secondary btn-compact"
