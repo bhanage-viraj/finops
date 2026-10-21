@@ -11,6 +11,10 @@ import {
   setStopLocation,
   updateRoute,
   moveStop,
+  moveStopsToFleet,
+  deleteStops,
+  deleteFleet,
+  clearRouteMaps,
   setStopStatus,
   getRouteMessage,
   markMapSent,
@@ -112,7 +116,34 @@ export function patchRoute() {
 
 export function move() {
   return asyncHandler(async (req, res) => {
-    res.json({ stop: await moveStop(req.params.stopId, req.user, req.body || {}) });
+    res.json(await moveStop(req.params.stopId, req.user, req.body || {}));
+  });
+}
+
+export function moveMany() {
+  return asyncHandler(async (req, res) => {
+    res.json(await moveStopsToFleet(req.params.dayId, req.user, {
+      stopIds: req.body?.stopIds,
+      routeId: req.body?.routeId,
+    }));
+  });
+}
+
+export function removeStops() {
+  return asyncHandler(async (req, res) => {
+    res.json(await deleteStops(req.params.dayId, req.user, { stopIds: req.body?.stopIds }));
+  });
+}
+
+export function removeFleet() {
+  return asyncHandler(async (req, res) => {
+    res.json(await deleteFleet(req.params.routeId, req.user, { alsoStops: req.body?.alsoStops === true }));
+  });
+}
+
+export function clearMaps() {
+  return asyncHandler(async (req, res) => {
+    res.json({ route: await clearRouteMaps(req.params.routeId, req.user) });
   });
 }
 

@@ -53,6 +53,18 @@ export function moveStop(stopId, payload) {
   return api(`/deliveries/stops/${stopId}/move`, { method: 'PATCH', json: payload });
 }
 
+export function moveStops(dayId, payload) {
+  return api(`/deliveries/${dayId}/moves`, { method: 'POST', json: payload });
+}
+
+export function deleteStops(dayId, payload) {
+  return api(`/deliveries/${dayId}/stops/delete`, { method: 'POST', json: payload });
+}
+
+export function deleteFleet(routeId, payload = {}) {
+  return api(`/deliveries/routes/${routeId}`, { method: 'DELETE', json: payload });
+}
+
 export function updateRoute(routeId, payload) {
   return api(`/deliveries/routes/${routeId}`, { method: 'PATCH', json: payload });
 }
@@ -63,6 +75,10 @@ export function fetchRouteMessage(routeId) {
 
 export function markMapSent(routeId) {
   return api(`/deliveries/routes/${routeId}/map-sent`, { method: 'POST' });
+}
+
+export function clearRouteMaps(routeId) {
+  return api(`/deliveries/routes/${routeId}/maps`, { method: 'DELETE' });
 }
 
 export function reorderRoute(routeId) {

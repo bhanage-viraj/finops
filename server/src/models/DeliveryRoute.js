@@ -14,6 +14,8 @@ const deliveryRouteSchema = new Schema({
   stopOrder: { type: [{ type: Schema.Types.ObjectId, ref: 'DeliveryStop' }], default: [] },
   mapSentAt: { type: Date, default: null },
   mapsFlag: { type: Boolean, default: false },
+  /** True after stops move onto or off a fleet whose map was already sent. */
+  mapsStale: { type: Boolean, default: false },
   otwFlag: { type: Boolean, default: false },
   doneFlag: { type: Boolean, default: false },
   loadingTotals: { type: Schema.Types.Mixed, default: {} },

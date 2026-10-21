@@ -11,6 +11,7 @@ import { httpError } from '../../utils/http.js';
 import { orderStops } from './stopOrder.js';
 import { loadingTotalsObject } from './loadingList.js';
 import { buildRouteWhatsAppMessage, whatsappUrl } from './whatsappMessage.js';
+import { extraFleetName, fleetMapsAfterMove, stopsKeptOnSheet } from './mapsFreshness.js';
 import { applyListPrices } from './priceList.js';
 import { mapsSearchUrl } from './mapsLink.js';
 import { coordsFromMapsUrl, parseDms, parsePlusCode, parseDecimalCoords } from './locationResolver.js';
@@ -33,6 +34,15 @@ export async function getDayDetail(dayId) {
   const day = await DeliveryDay.findById(dayId).lean();
   if (!day) throw httpError(404, 'Delivery day not found.');
   const routes = await DeliveryRoute.find({ dayId }).sort({ number: 1, areaName: 1 }).lean();
+  const driverIds = [...new Set(routes.flatMap((route) => (route.driverIds || []).map(String)))];
+  if (driverIds.length) {
+    const drivers = await Driver.find({ _id: { $in: driverIds } }).lean();
+    const nameById = new Map(drivers.map((driver) => [String(driver._id), driver.name]));
+    for (const route of routes) {
+      if (route.driverNames?.length) continue;
+      route.driverNames = (route.driverIds || []).map((id) => nameById.get(String(id))).filter(Boolean);
+    }
+  }
   const areaByRoute = new Map(routes.map((route) => [String(route._id), route.areaName]));
   const stops = (await DeliveryStop.find({ dayId }).sort({ sortIndex: 1 }).lean()).map((stop) => ({
     ...stop,
@@ -137,18 +147,24 @@ export async function updateRoute(routeId, user, body) {
 
   if (body.vehicleId !== undefined) {
     route.vehicleId = body.vehicleId || null;
-    if (body.vehicleLabel) route.vehicleLabel = body.vehicleLabel;
-    else if (body.vehicleId) {
-      const v = await Vehicle.findById(body.vehicleId).lean();
+    if (!route.vehicleId) route.vehicleLabel = '';
+    else if (body.vehicleLabel) route.vehicleLabel = body.vehicleLabel;
+    else {
+      const v = await Vehicle.findById(route.vehicleId).lean();
       route.vehicleLabel = v ? `${v.type} ${v.plate}` : '';
     }
   }
-  if (body.driverIds) {
-    route.driverIds = body.driverIds;
-    const drivers = await Driver.find({ _id: { $in: body.driverIds } }).lean();
+  if (Array.isArray(body.driverIds)) {
+    const ids = body.driverIds.filter((id) => /^[a-f0-9]{24}$/i.test(String(id)));
+    route.driverIds = ids;
+    const drivers = ids.length ? await Driver.find({ _id: { $in: ids } }).lean() : [];
     route.driverNames = drivers.map((d) => d.name);
   }
-  if (body.areaName) route.areaName = body.areaName;
+  if (body.areaName != null) {
+    const name = String(body.areaName).trim().slice(0, 80);
+    if (!name) throw httpError(400, 'The fleet needs a name.');
+    route.areaName = name;
+  }
   if (body.areaId !== undefined) route.areaId = body.areaId || null;
   if (Array.isArray(body.stopOrder)) {
     route.stopOrder = body.stopOrder;
@@ -181,33 +197,225 @@ export async function moveStop(stopId, user, { routeId, sortIndex }) {
   const stop = await DeliveryStop.findById(stopId);
   if (!stop) throw httpError(404, 'Stop not found.');
   const beforeRoute = stop.routeId;
-  stop.routeId = routeId || null;
+  const nextRouteId = routeId || null;
+  const sameFleet = String(beforeRoute || '') === String(nextRouteId || '');
+  const touchedIds = [beforeRoute, nextRouteId].filter(Boolean);
+  const touched = touchedIds.length
+    ? await DeliveryRoute.find({ _id: { $in: touchedIds } })
+    : [];
+  const freshness = fleetMapsAfterMove(touched, { sameFleet, stopStatus: stop.status });
+
+  stop.routeId = nextRouteId;
   if (sortIndex != null) stop.sortIndex = sortIndex;
+  if (freshness.stopStatus !== stop.status) {
+    stop.status = freshness.stopStatus;
+    stop.statusHistory.push({
+      status: freshness.stopStatus,
+      source: 'admin',
+      userId: user?._id || null,
+      at: new Date(),
+      note: 'Moved to another fleet after the map was sent.',
+    });
+  }
   await stop.save();
 
-  // Refresh both routes' stopOrder and loading totals
-  for (const rid of [beforeRoute, routeId].filter(Boolean)) {
+  for (const rid of touchedIds) {
     const stops = await DeliveryStop.find({ routeId: rid }).sort({ sortIndex: 1 });
-    await DeliveryRoute.updateOne(
-      { _id: rid },
-      {
-        $set: {
-          stopOrder: stops.map((s) => s._id),
-          loadingTotals: loadingTotalsObject(stops),
-        },
-      },
-    );
+    const update = {
+      stopOrder: stops.map((s) => s._id),
+      loadingTotals: loadingTotalsObject(stops),
+    };
+    if (freshness.staleRouteIds.includes(String(rid))) update.mapsStale = true;
+    await DeliveryRoute.updateOne({ _id: rid }, { $set: update });
   }
 
   await writeAudit({
-    userId: user._id,
+    userId: user?._id,
     action: 'move_stop',
     entity: 'deliveryStops',
     entityId: stop._id,
     before: { routeId: beforeRoute },
-    after: { routeId: stop.routeId, sortIndex: stop.sortIndex },
+    after: { routeId: stop.routeId, sortIndex: stop.sortIndex, mapsStale: freshness.mapsStale },
   });
-  return stop.toObject();
+  return { stop: stop.toObject(), mapsStale: freshness.mapsStale };
+}
+
+/** An empty fleet on this day, for stops that do not fit the area they were given. */
+export async function createExtraFleet(dayId, user) {
+  const day = await DeliveryDay.findById(dayId);
+  if (!day) throw httpError(404, 'Delivery day not found.');
+  const existing = await DeliveryRoute.find({ dayId }).lean();
+  const named = extraFleetName(existing);
+  const route = await DeliveryRoute.create({
+    dayId,
+    areaName: named.areaName,
+    number: named.number,
+    driverNames: [],
+    stopOrder: [],
+    loadingTotals: {},
+  });
+  await writeAudit({
+    userId: user?._id,
+    action: 'create',
+    entity: 'deliveryRoutes',
+    entityId: route._id,
+    after: { areaName: route.areaName, dayId: String(dayId) },
+  });
+  return route.toObject();
+}
+
+/** Move several stops to one fleet. routeId "new" opens an extra fleet first. */
+export async function moveStopsToFleet(dayId, user, { stopIds, routeId } = {}) {
+  const ids = [...new Set((stopIds || []).map((id) => String(id || '').trim()))]
+    .filter((id) => /^[a-f0-9]{24}$/i.test(id));
+  if (!ids.length) throw httpError(400, 'Choose the stops to move.');
+  if (ids.length > 80) throw httpError(400, 'Move up to 80 stops at a time.');
+
+  let targetId = routeId === 'unassigned' || routeId == null || routeId === '' ? null : String(routeId);
+  if (routeId === 'new') {
+    const created = await createExtraFleet(dayId, user);
+    targetId = String(created._id);
+  } else if (targetId && !/^[a-f0-9]{24}$/i.test(targetId)) {
+    throw httpError(400, 'Choose a fleet.');
+  }
+  if (targetId) {
+    const route = await DeliveryRoute.findOne({ _id: targetId, dayId });
+    if (!route) throw httpError(404, 'That fleet is not on this day.');
+  }
+
+  const found = await DeliveryStop.find({ _id: { $in: ids }, dayId }).select('_id');
+  if (found.length !== ids.length) throw httpError(400, 'One of those stops is not on this day.');
+
+  let mapsStale = false;
+  for (const id of ids) {
+    const result = await moveStop(id, user, { routeId: targetId });
+    if (result.mapsStale) mapsStale = true;
+  }
+  return { routeId: targetId || '', moved: ids.length, mapsStale };
+}
+
+function stopIdList(stopIds) {
+  const ids = [...new Set((stopIds || []).map((id) => String(id || '').trim()))]
+    .filter((id) => /^[a-f0-9]{24}$/i.test(id));
+  if (!ids.length) throw httpError(400, 'Choose the stops first.');
+  if (ids.length > 80) throw httpError(400, 'Change up to 80 stops at a time.');
+  return ids;
+}
+
+function keptMessage(stops) {
+  const names = stopsKeptOnSheet(stops).map((stop) => stop.customerName).filter(Boolean);
+  if (!names.length) return '';
+  const shown = names.slice(0, 5).join(', ');
+  return names.length === 1
+    ? `${shown} stays on the sheet because it is already delivered.`
+    : `${shown} stay on the sheet because they are already delivered.`;
+}
+
+/** Remove stops from the day. Delivered stops are left in place. */
+export async function deleteStops(dayId, user, { stopIds } = {}) {
+  const ids = stopIdList(stopIds);
+  const stops = await DeliveryStop.find({ _id: { $in: ids }, dayId });
+  if (stops.length !== ids.length) throw httpError(400, 'One of those stops is not on this day.');
+  const kept = keptMessage(stops);
+  if (kept) throw httpError(400, kept);
+  const routeIds = [...new Set(stops.map((stop) => String(stop.routeId || '')).filter(Boolean))];
+  await DeliveryStop.deleteMany({ _id: { $in: ids } });
+  for (const rid of routeIds) {
+    const left = await DeliveryStop.find({ routeId: rid }).sort({ sortIndex: 1 });
+    const route = await DeliveryRoute.findById(rid);
+    if (!route) continue;
+    route.stopOrder = left.map((stop) => stop._id);
+    route.loadingTotals = loadingTotalsObject(left);
+    if (route.mapSentAt || route.mapsFlag) route.mapsStale = true;
+    await route.save();
+  }
+  await refreshDaySummary(dayId);
+  await writeAudit({
+    userId: user?._id,
+    action: 'delete_stops',
+    entity: 'deliveryDays',
+    entityId: dayId,
+    after: { deleted: ids.length },
+  });
+  return { deleted: ids.length };
+}
+
+/** Remove a fleet. Stops can stay on the day with no fleet, or leave with it. */
+export async function deleteFleet(routeId, user, { alsoStops = false } = {}) {
+  const route = await DeliveryRoute.findById(routeId);
+  if (!route) throw httpError(404, 'Route not found.');
+  const stops = await DeliveryStop.find({ routeId: route._id });
+  if (alsoStops) {
+    const kept = keptMessage(stops);
+    if (kept) throw httpError(400, kept);
+    await DeliveryStop.deleteMany({ routeId: route._id });
+  } else {
+    for (const stop of stops) {
+      stop.routeId = null;
+      if (stop.status === 'map_sent') {
+        stop.status = 'planned';
+        stop.statusHistory.push({
+          status: 'planned',
+          source: 'admin',
+          userId: user?._id || null,
+          at: new Date(),
+          note: 'Fleet removed after the map was sent.',
+        });
+      }
+      await stop.save();
+    }
+  }
+  const dayId = route.dayId;
+  const areaName = route.areaName;
+  await route.deleteOne();
+  await refreshDaySummary(dayId);
+  await writeAudit({
+    userId: user?._id,
+    action: 'delete_fleet',
+    entity: 'deliveryRoutes',
+    entityId: routeId,
+    before: { areaName, stops: stops.length },
+    after: { alsoStops: Boolean(alsoStops) },
+  });
+  return { deleted: true, stops: stops.length, alsoStops: Boolean(alsoStops) };
+}
+
+/** Drop the driver's route map. Customer pins stay, so a new send can be built from the current load. */
+export async function clearRouteMaps(routeId, user) {
+  const route = await DeliveryRoute.findById(routeId);
+  if (!route) throw httpError(404, 'Route not found.');
+  const before = {
+    mapSentAt: route.mapSentAt,
+    mapsFlag: route.mapsFlag,
+    mapsStale: route.mapsStale,
+  };
+  route.mapSentAt = null;
+  route.mapsFlag = false;
+  route.mapsStale = false;
+  await route.save();
+
+  const sent = await DeliveryStop.find({ routeId: route._id, status: 'map_sent' });
+  for (const stop of sent) {
+    stop.status = 'planned';
+    stop.statusHistory.push({
+      status: 'planned',
+      source: 'admin',
+      userId: user?._id || null,
+      at: new Date(),
+      note: 'Fleet map deleted.',
+    });
+    await stop.save();
+  }
+
+  await writeAudit({
+    userId: user?._id,
+    action: 'clear_maps',
+    entity: 'deliveryRoutes',
+    entityId: route._id,
+    before,
+    after: { mapSentAt: null, mapsFlag: false, mapsStale: false, stopsReset: sent.length },
+  });
+  return route.toObject();
 }
 
 export function assertStatusTransition(status, source) {
@@ -292,6 +500,7 @@ export async function markMapSent(routeId, user) {
   if (!route) throw httpError(404, 'Route not found.');
   route.mapSentAt = new Date();
   route.mapsFlag = true;
+  route.mapsStale = false;
   await route.save();
   await DeliveryStop.updateMany(
     { routeId: route._id, status: 'planned' },
