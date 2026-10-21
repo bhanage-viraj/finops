@@ -4,6 +4,7 @@ import { areaFromTabTitle } from './areaCatalog.js';
 
 const MAX_HTML = 2_000_000;
 const MAX_XLSX = 8_000_000;
+const MAX_CSV = 1_000_000;
 
 export function spreadsheetIdFromUrl(input) {
   const text = String(input || '').trim();
@@ -32,9 +33,10 @@ export function sheetTabsFromHtml(html) {
   return tabs;
 }
 
-/** Keep the tabs whose title is already that delivery date. Do not invent new groups. */
+/** Keep the tabs whose title is already that delivery date. Copies are not a second fleet. */
 export function selectTabsForDate(tabs, date) {
   return (tabs || [])
+    .filter((tab) => !/^copy of\b/i.test(String(tab.name || '').trim()))
     .filter((tab) => parseDeliveryDate(tab.name) === date)
     .sort((a, b) => {
       const an = areaFromTabTitle(a.name).number || 0;
@@ -42,6 +44,83 @@ export function selectTabsForDate(tabs, date) {
       if (an !== bn) return an - bn;
       return a.name.localeCompare(b.name);
     });
+}
+
+export function shiftIsoDate(iso, days) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!match) return null;
+  const dt = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days));
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Tabs named for this date, plus yesterday's tabs.
+ * Yesterday is included because a list is sometimes renamed on the sheet
+ * (22 OKTOBER) before the tab title (21 OCT) is renamed.
+ */
+export function tabsForDeliveryDate(tabs, date) {
+  const named = selectTabsForDate(tabs, date).map((tab) => ({ ...tab, namedForDate: true }));
+  const previous = shiftIsoDate(date, -1);
+  const carried = previous
+    ? selectTabsForDate(tabs, previous).map((tab) => ({ ...tab, namedForDate: false }))
+    : [];
+  return [...named, ...carried];
+}
+
+function cleanCsvCell(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  if (/^true$/i.test(text)) return true;
+  if (/^false$/i.test(text)) return false;
+  return text;
+}
+
+/** Google's public CSV export. Quoted notes can contain commas and line breaks. */
+export function csvToRows(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  const src = String(text || '').replace(/^\uFEFF/, '');
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      quoted = true;
+      continue;
+    }
+    if (ch === ',') {
+      row.push(cleanCsvCell(cell));
+      cell = '';
+      continue;
+    }
+    if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && src[i + 1] === '\n') i += 1;
+      row.push(cleanCsvCell(cell));
+      if (row.some((value) => value != null)) rows.push(row);
+      row = [];
+      cell = '';
+      continue;
+    }
+    cell += ch;
+  }
+  if (cell.length || row.length) {
+    row.push(cleanCsvCell(cell));
+    if (row.some((value) => value != null)) rows.push(row);
+  }
+  return rows;
 }
 
 async function readLimited(response, maxBytes) {
@@ -67,20 +146,25 @@ async function readLimited(response, maxBytes) {
 }
 
 async function fetchGoogle(url, maxBytes) {
-  let response;
-  try {
-    response = await fetch(url, {
-      redirect: 'follow',
-      headers: { 'User-Agent': 'FinOps' },
-      signal: AbortSignal.timeout(30000),
-    });
-  } catch {
-    throw httpError(400, 'The Google Sheet did not respond. Try again.');
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        redirect: 'follow',
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FinOps)' },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!response.ok) {
+        lastError = httpError(400, 'That Google Sheet could not be opened. Share it so anyone with the link can view.');
+        continue;
+      }
+      return await readLimited(response, maxBytes);
+    } catch (err) {
+      lastError = err;
+    }
   }
-  if (!response.ok) {
-    throw httpError(400, 'That Google Sheet could not be opened. Share it so anyone with the link can view.');
-  }
-  return readLimited(response, maxBytes);
+  console.error('Google Sheet fetch failed', lastError?.message || lastError);
+  throw httpError(400, 'The Google Sheet did not respond. Try again.');
 }
 
 export async function fetchPublicSheetTabs(sheetUrl) {
@@ -99,4 +183,17 @@ export async function fetchPublicSheetTab(id, gid) {
     `https://docs.google.com/spreadsheets/d/${id}/export?format=xlsx&gid=${gid}`,
     MAX_XLSX,
   );
+}
+
+/** One tab as CSV. The full xlsx export of this yearly file is too slow to load a day. */
+export async function fetchPublicSheetCsv(id, gid) {
+  if (!/^-?\d+$/.test(String(gid))) throw httpError(400, 'That sheet tab could not be read.');
+  const text = (await fetchGoogle(
+    `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${encodeURIComponent(gid)}`,
+    MAX_CSV,
+  )).toString('utf8');
+  if (/<!doctype html/i.test(text.slice(0, 300)) || text.includes('accounts.google.com')) {
+    throw httpError(400, 'That Google Sheet is not public. Share it so anyone with the link can view.');
+  }
+  return text;
 }

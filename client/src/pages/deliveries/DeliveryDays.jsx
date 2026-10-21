@@ -10,6 +10,12 @@ import {
 } from '../../api/deliveries.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 
+function displayDate(iso) {
+  const [year, month, day] = String(iso || '').split('-');
+  if (!year || !month || !day) return '';
+  return `${day}/${month}/${year}`;
+}
+
 function todayIso() {
   const d = new Date();
   const y = d.getFullYear();
@@ -42,10 +48,14 @@ export default function DeliveryDays() {
     setError('');
     setMessage('');
     try {
-      const result = await importDeliverySheet(sheetUrl, date || undefined);
+      const result = await importDeliverySheet(sheetUrl, date);
       const id = result.day?._id || result.day?.id;
       const fleets = result.routes?.length || 0;
-      setMessage(`Loaded ${result.summary?.stopCount || 0} deliveries in ${fleets} lists. Each tab stayed as it was split.`);
+      const savedDate = displayDate(result.day?.date || date);
+      const leftOut = result.skipped?.length
+        ? ` ${result.skipped.length} lists were left out because the date printed on them was not ${savedDate}.`
+        : '';
+      setMessage(`Loaded ${result.summary?.stopCount || 0} deliveries in ${fleets} lists for ${savedDate}. Each tab stayed as it was split.${leftOut}`);
       load();
       if (id) navigate(`/deliver/${id}`);
     } catch (err) {
@@ -138,8 +148,8 @@ export default function DeliveryDays() {
       <section className="card sheet-upload">
         <h2>Google Sheet</h2>
         <p className="hint">
-          Pick the date, then use the public sheet. Seminyak stays Seminyak, Canggu stays Canggu.
-          The app adds the map links and does not move a stop to another list.
+          The date you pick is the delivery date. {displayDate(date) || 'That date'} loads the tabs named for that day,
+          for example 21 OCT. Seminyak stays Seminyak. A list whose heading says a different date is left out.
         </p>
         <div className="row gap wrap">
           <label className="field" style={{ margin: 0 }}>

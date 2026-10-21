@@ -25,9 +25,10 @@ import { nameKey } from './names.js';
 import { AREA_DEFS, fleetNameFromTab } from './areaCatalog.js';
 import { expandMapsLink } from './expandMapsLink.js';
 import {
-  fetchPublicSheetTab,
+  csvToRows,
+  fetchPublicSheetCsv,
   fetchPublicSheetTabs,
-  selectTabsForDate,
+  tabsForDeliveryDate,
 } from './googleSheet.js';
 
 function isOrderListSheet(name) {
@@ -295,40 +296,61 @@ export async function importOrderWorkbook({
  * Read one day's tabs from a public Google Sheet.
  * Each tab is already one fleet. Stops stay in the sheet's order.
  */
+function displayDate(iso) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!match) return String(iso || '');
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
 export async function importPublicGoogleSheet({ url, date, user, env }) {
   const dayDate = String(date || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dayDate)) throw httpError(400, 'Pick the delivery date.');
+  const shownDate = displayDate(dayDate);
+
+  const existing = await DeliveryDay.findOne({ date: dayDate });
+  if (existing) {
+    throw httpError(409, `${shownDate} already has a delivery day. Delete that day, then use the sheet again.`);
+  }
 
   const { id, tabs } = await fetchPublicSheetTabs(url);
-  const chosen = selectTabsForDate(tabs, dayDate);
-  if (!chosen.length) {
-    throw httpError(400, `No lists for ${dayDate} on that sheet. The tabs are already split, for example 22 OCT - 1.SEMINYAK.`);
+  const chosen = tabsForDeliveryDate(tabs, dayDate);
+  if (!chosen.some((tab) => tab.namedForDate)) {
+    throw httpError(400, `No lists for ${shownDate}. The tabs are named with that date, for example 22 OCT - 1.SEMINYAK.`);
   }
 
   const parsedTabs = [];
+  const skipped = [];
   const queue = chosen.slice();
   async function worker() {
     while (queue.length) {
       const tab = queue.shift();
-      const buffer = await fetchPublicSheetTab(id, tab.gid);
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(buffer);
-      const sheet = workbook.worksheets[0];
-      if (!sheet) continue;
-      const parsed = parseRouteSheetRows(worksheetToRows(sheet), { sheetName: tab.name });
+      let parsed;
+      try {
+        const csv = await fetchPublicSheetCsv(id, tab.gid);
+        parsed = parseRouteSheetRows(csvToRows(csv), { sheetName: tab.name });
+      } catch (err) {
+        if (err?.status) throw err;
+        throw httpError(400, `Could not read ${tab.name}. Try again.`);
+      }
+      // The date on the form is the delivery date. A heading that says another day stays out.
+      const listDate = parsed.headerDate || parsed.date;
+      if (listDate && listDate !== dayDate) {
+        if (tab.namedForDate) skipped.push({ name: tab.name, date: listDate });
+        continue;
+      }
       if (parsed.stops.length) parsedTabs.push(parsed);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(4, chosen.length) }, () => worker()));
+  await Promise.all(Array.from({ length: Math.min(6, chosen.length) }, () => worker()));
   parsedTabs.sort((a, b) => (a.area?.number || 0) - (b.area?.number || 0) || a.sheetName.localeCompare(b.sheetName));
-  if (!parsedTabs.length) throw httpError(400, 'Those tabs have no deliveries.');
-
-  await ensureSeedAreas();
-  const existing = await DeliveryDay.findOne({ date: dayDate });
-  if (existing) {
-    throw httpError(409, `A delivery day for ${dayDate} already exists. Delete it first, then use the sheet again.`);
+  if (!parsedTabs.length) {
+    const other = skipped[0] ? displayDate(skipped[0].date) : '';
+    throw httpError(400, other
+      ? `No lists for ${shownDate}. Those tabs are dated ${other} on the sheet.`
+      : `No deliveries for ${shownDate} on that sheet.`);
   }
 
+  await ensureSeedAreas();
   const bookByName = await loadBookMap();
   const day = await DeliveryDay.create({
     date: dayDate,
@@ -414,6 +436,7 @@ export async function importPublicGoogleSheet({ url, date, user, env }) {
     day: day.toObject(),
     routes: routes.map((route) => route.toObject()),
     summary,
+    skipped,
   };
 }
 

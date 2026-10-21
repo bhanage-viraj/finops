@@ -40,6 +40,19 @@ export function parseDeliveryDate(text, fallbackYear = new Date().getFullYear())
   return null;
 }
 
+const LONG_DATE = /(\d{1,2})\s+(JANUARI|FEBRUARI|MARET|APRIL|MEI|JUNI|JULI|AGUSTUS|SEPTEMBER|OKTOBER|NOVEMBER|DESEMBER|JANUARY|FEBRUARY|MARCH|MAY|JUNE|JULY|AUGUST|OCTOBER|DECEMBER)\s+(\d{4})/i;
+
+/** The date printed on the list, such as "LIST PENJUALAN HARIAN - 21 OKTOBER 2026". */
+export function sheetHeaderDate(rows) {
+  for (let i = 0; i < Math.min(rows?.length || 0, 8); i += 1) {
+    const joined = (rows[i] || []).map((value) => (value == null ? '' : String(value))).join(' ');
+    if (!LONG_DATE.test(joined)) continue;
+    const date = parseDeliveryDate(joined);
+    if (date) return date;
+  }
+  return null;
+}
+
 function isoDate(y, m, d) {
   const dt = new Date(Date.UTC(y, m, d));
   if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m || dt.getUTCDate() !== d) return null;
@@ -226,6 +239,7 @@ export function parseRouteSheetRows(rows, { sheetName = '' } = {}) {
 
   return {
     date,
+    headerDate: sheetHeaderDate(rows),
     sheetName,
     area: areaInfo,
     vehicleLabel,
