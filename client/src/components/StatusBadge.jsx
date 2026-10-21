@@ -66,7 +66,7 @@ const LABEL = {
   otw: 'OTW',
   arrived: 'Arrived',
   delivered: 'Delivered',
-  nota_checked: 'Nota checked',
+  nota_checked: 'Receipt checked',
   second_delivery: 'Second delivery',
 };
 

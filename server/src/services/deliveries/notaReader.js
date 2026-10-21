@@ -22,7 +22,7 @@ export async function attachNotaToStop({
 }) {
   const stop = await DeliveryStop.findById(stopId);
   if (!stop) throw httpError(404, 'Stop not found.');
-  if (!file?.buffer && !file?.bytes) throw httpError(400, 'Upload a nota photo.');
+  if (!file?.buffer && !file?.bytes) throw httpError(400, 'Upload a receipt photo.');
 
   const bytes = file.buffer || file.bytes;
   const mimeType = file.mimetype || file.mimeType || 'image/jpeg';
@@ -60,7 +60,7 @@ export async function attachNotaToStop({
       readAt: new Date(),
     };
     await stop.save();
-    throw httpError(422, error.message || 'The nota could not be read.');
+    throw httpError(422, error.message || 'The receipt could not be read.');
   }
 
   // Duplicate nota number check
@@ -137,7 +137,7 @@ export async function confirmNota(stopId, user, body = {}) {
   const stop = await DeliveryStop.findById(stopId);
   if (!stop) throw httpError(404, 'Stop not found.');
   if (!stop.ai || stop.ai.failed) {
-    throw httpError(400, 'Read a nota photo first.');
+    throw httpError(400, 'Read a receipt photo first.');
   }
   const confirmed = {
     notaNo: body.notaNo ?? stop.ai.notaNo,

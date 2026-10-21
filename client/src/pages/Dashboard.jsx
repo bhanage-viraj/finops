@@ -7,7 +7,7 @@ const FEATURES = [
   ['/documents', 'Documents', 'Scan and approve expense receipts'],
   ['/payments', 'Payments', 'Match bank transfer screenshots'],
   ['/follow-up', 'Follow-up', 'Remind overdue customers'],
-  ['/deliver', 'Deliver', 'Routes, maps, Cartrack (read-only), nota check'],
+  ['/deliver', 'Deliver', 'Routes, maps, Cartrack (read-only), receipt check'],
 ];
 
 function ZohoConnect() {

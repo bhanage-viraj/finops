@@ -274,7 +274,7 @@ export function notaFile(env) {
   return asyncHandler(async (req, res) => {
     const stop = await DeliveryStop.findById(req.params.stopId).lean();
     if (!stop?.delivered?.notaFileKey) {
-      res.status(404).json({ error: 'No nota photo on this stop.' });
+      res.status(404).json({ error: 'No receipt photo on this stop.' });
       return;
     }
     const bytes = await createFileStorage(env.upload.dir).read(stop.delivered.notaFileKey);

@@ -838,6 +838,19 @@ label.btn.is-disabled {
   padding: 0 var(--space-4);
 }
 .delivery-row.is-open { background: var(--accent-soft); }
+.delivery-row.no-pick { grid-template-columns: minmax(0, 1fr) auto; }
+.fleet-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  padding: 0 var(--space-4) var(--space-3);
+}
+.fleet-links .linkish,
+.sheet-map-warn .linkish {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
 .delivery-pick {
   display: flex;
   align-items: center;

@@ -109,6 +109,7 @@ export default function DayDetail() {
   const [driverId, setDriverId] = useState('');
   const [editId, setEditId] = useState('');
   const [draft, setDraft] = useState(null);
+  const [moving, setMoving] = useState(false);
   const notaRefs = useRef({});
 
   const load = useCallback(async () => {
@@ -124,6 +125,7 @@ export default function DayDetail() {
     setMoveTarget('');
     setEditId('');
     setDraft(null);
+    setMoving(false);
     load().catch((err) => setError(err.message));
     fetchDeliveryMeta().then((body) => {
       setMeta({ vehicles: body.vehicles || [], drivers: body.drivers || [] });
@@ -323,7 +325,12 @@ export default function DayDetail() {
           // Keep the draft when a person still has to confirm it.
         }
       }
-    }, 'Nota uploaded.');
+    }, 'Receipt uploaded.');
+  }
+
+  function clearSentMap(route, title) {
+    if (!window.confirm(`Clear the sent map for ${title}? The deliveries stay.`)) return;
+    run(() => clearRouteMaps(route._id), 'Sent map cleared. Send this fleet again when the load is right.');
   }
 
   async function onDeleteSheet() {
@@ -371,10 +378,24 @@ export default function DayDetail() {
             <StatusBadge status={day.status} />
           </p>
           <p className="hint">
-            Open a delivery to change it. Tick the ones that do not fit, then move them. Send the fleet when the load is right.
+            {moving
+              ? 'Tick the deliveries that do not fit, then move them.'
+              : 'Tap a delivery to change it. Send the fleet when the load is right.'}
           </p>
         </div>
         <div className="row gap wrap">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={busy}
+            onClick={() => {
+              setMoving((on) => !on);
+              setPicked(new Set());
+              setMoveTarget('');
+            }}
+          >
+            {moving ? 'Done' : 'Move deliveries'}
+          </button>
           <button
             type="button"
             className="btn btn-secondary"
@@ -477,7 +498,29 @@ export default function DayDetail() {
                 )}
               </div>
               <div className="fleet-actions">
-                {section.stops.length > 0 && (
+                {section.route && (
+                  <button
+                    type="button"
+                    className={editingHere ? 'btn btn-secondary' : 'btn btn-primary'}
+                    disabled={busy || section.stops.length === 0}
+                    onClick={() => openAreaSend(section.route._id)}
+                  >
+                    {section.route.mapsStale ? 'Send updated map' : 'Send to driver'}
+                  </button>
+                )}
+              </div>
+            </div>
+            {section.route && (
+              <div className="fleet-links">
+                <button
+                  type="button"
+                  className="linkish"
+                  disabled={busy}
+                  onClick={() => (customId === String(section.route._id) ? setCustomId('') : openCustomise(section.route))}
+                >
+                  {customId === String(section.route._id) ? 'Close' : 'Change fleet'}
+                </button>
+                {moving && section.stops.length > 0 && (
                   <button
                     type="button"
                     className="linkish"
@@ -487,41 +530,18 @@ export default function DayDetail() {
                     {allOn ? 'Clear selection' : 'Select all'}
                   </button>
                 )}
-                {section.route && (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={busy}
-                      onClick={() => (customId === String(section.route._id) ? setCustomId('') : openCustomise(section.route))}
-                    >
-                      {customId === String(section.route._id) ? 'Close' : 'Fleet details'}
-                    </button>
-                    {(mapSent || section.route.mapsStale) && (
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        disabled={busy}
-                        onClick={() => {
-                          if (!window.confirm(`Clear the sent map for ${section.title}? The deliveries stay. Send the fleet again when the load is right.`)) return;
-                          run(() => clearRouteMaps(section.route._id), 'Sent map cleared. Send this fleet again when the load is right.');
-                        }}
-                      >
-                        Clear sent map
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className={editingHere ? 'btn btn-secondary' : 'btn btn-primary'}
-                      disabled={busy || section.stops.length === 0}
-                      onClick={() => openAreaSend(section.route._id)}
-                    >
-                      {section.route.mapsStale ? 'Send updated map' : 'Send to driver'}
-                    </button>
-                  </>
+                {mapSent && !section.route.mapsStale && (
+                  <button
+                    type="button"
+                    className="linkish"
+                    disabled={busy}
+                    onClick={() => clearSentMap(section.route, section.title)}
+                  >
+                    Clear sent map
+                  </button>
                 )}
               </div>
-            </div>
+            )}
 
             {section.route && customId === String(section.route._id) && (
               <form
@@ -565,8 +585,16 @@ export default function DayDetail() {
 
             {section.route?.mapsStale && (
               <p className="message message-warn sheet-map-warn">
-                This load changed after the map was sent. Clear the sent map, then send it again.
-                The old WhatsApp message is still on the driver’s phone.
+                This load changed after the map was sent.{' '}
+                <button
+                  type="button"
+                  className="linkish"
+                  disabled={busy}
+                  onClick={() => clearSentMap(section.route, section.title)}
+                >
+                  Clear the sent map
+                </button>
+                {' '}then send it again. The old WhatsApp message is still on the driver’s phone.
               </p>
             )}
 
@@ -576,15 +604,17 @@ export default function DayDetail() {
                 const url = mapsUrl(stop);
                 return (
                   <li key={stop._id} className={stop.location?.needsPin ? 'delivery-item needs-pin' : 'delivery-item'}>
-                    <div className={open ? 'delivery-row is-open' : 'delivery-row'}>
-                      <label className="delivery-pick">
-                        <input
-                          type="checkbox"
-                          checked={picked.has(stop._id)}
-                          aria-label={`Select ${stop.customerName}`}
-                          onChange={() => togglePicked(stop._id)}
-                        />
-                      </label>
+                    <div className={['delivery-row', open ? 'is-open' : '', moving ? '' : 'no-pick'].filter(Boolean).join(' ')}>
+                      {moving && (
+                        <label className="delivery-pick">
+                          <input
+                            type="checkbox"
+                            checked={picked.has(stop._id)}
+                            aria-label={`Select ${stop.customerName}`}
+                            onChange={() => togglePicked(stop._id)}
+                          />
+                        </label>
+                      )}
                       <button
                         type="button"
                         className="delivery-main"
@@ -736,7 +766,7 @@ export default function DayDetail() {
                             disabled={busy}
                             onClick={() => notaRefs.current[stop._id]?.click()}
                           >
-                            Upload nota
+                            Upload receipt
                           </button>
                           <input
                             ref={(el) => { notaRefs.current[stop._id] = el; }}
