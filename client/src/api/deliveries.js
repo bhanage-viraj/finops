@@ -61,6 +61,10 @@ export function deleteStops(dayId, payload) {
   return api(`/deliveries/${dayId}/stops/delete`, { method: 'POST', json: payload });
 }
 
+export function clearStopMaps(dayId, payload) {
+  return api(`/deliveries/${dayId}/maps/delete`, { method: 'POST', json: payload });
+}
+
 export function updateStop(stopId, payload) {
   return api(`/deliveries/stops/${stopId}`, { method: 'PATCH', json: payload });
 }

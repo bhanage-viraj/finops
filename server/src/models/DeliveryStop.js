@@ -18,6 +18,7 @@ const locationSnapshotSchema = new Schema({
   lng: { type: Number, default: null },
   source: { type: String, default: 'address' },
   mapsUrl: { type: String, default: '' },
+  hideMap: { type: Boolean, default: false },
   placeName: { type: String, default: '' },
   address: { type: String, default: '' },
   confidence: { type: String, enum: ['high', 'medium', 'low', 'none'], default: 'none' },

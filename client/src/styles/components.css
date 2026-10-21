@@ -839,6 +839,7 @@ label.btn.is-disabled {
 }
 .delivery-row.is-open { background: var(--accent-soft); }
 .delivery-row.no-pick { grid-template-columns: minmax(0, 1fr) auto; }
+.delivery-row.has-delete { grid-template-columns: 44px minmax(0, 1fr) auto auto; }
 .fleet-links {
   display: flex;
   flex-wrap: wrap;

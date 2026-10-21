@@ -77,6 +77,15 @@ test('mapsSearchUrl prefers coordinates and encodes special characters', () => {
   assert.ok(!withAddr.includes('Jl. Raya Babakan #19 / Canggu'));
 });
 
+test('a deleted map is left out of the driver links', () => {
+  const hidden = { customerName: 'Hidden', location: { lat: -8.6, lng: 115.1, hideMap: true, mapsUrl: 'https://maps.google.com/?q=1' } };
+  const shown = { customerName: 'Shown', location: { lat: -8.7, lng: 115.2 } };
+  assert.equal(mapsSearchUrl(hidden), '');
+  const links = routeDirectionsLinks([hidden, shown]);
+  assert.equal(links.length, 1);
+  assert.equal(links[0].stopCount, 1);
+});
+
 test('route directions split within waypoint limit', () => {
   const stops = Array.from({ length: 25 }, (_, i) => ({
     customerName: `C${i}`,

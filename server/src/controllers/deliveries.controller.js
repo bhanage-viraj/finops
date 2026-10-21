@@ -13,6 +13,7 @@ import {
   moveStop,
   moveStopsToFleet,
   deleteStops,
+  clearStopMaps,
   updateStop,
   clearRouteMaps,
   setStopStatus,
@@ -132,6 +133,12 @@ export function moveMany() {
 export function removeStops() {
   return asyncHandler(async (req, res) => {
     res.json(await deleteStops(req.params.dayId, req.user, { stopIds: req.body?.stopIds }));
+  });
+}
+
+export function removeStopMaps() {
+  return asyncHandler(async (req, res) => {
+    res.json(await clearStopMaps(req.params.dayId, req.user, { stopIds: req.body?.stopIds }));
   });
 }
 

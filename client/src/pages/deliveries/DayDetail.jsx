@@ -14,6 +14,7 @@ import {
   deleteDeliveryDay,
   clearRouteMaps,
   deleteStops,
+  clearStopMaps,
   updateRoute,
   updateStop,
 } from '../../api/deliveries.js';
@@ -23,6 +24,7 @@ import LocationMap from './LocationMap.jsx';
 
 function mapsUrl(stop) {
   const loc = stop.location || {};
+  if (loc.hideMap) return '';
   if (loc.mapsUrl) return loc.mapsUrl;
   if (loc.lat != null && loc.lng != null) {
     return `https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lng}`;
@@ -328,6 +330,25 @@ export default function DayDetail() {
     }, 'Receipt uploaded.');
   }
 
+  function deleteMaps(ids) {
+    const count = ids.length;
+    if (!window.confirm(`Delete the map for ${count} ${count === 1 ? 'delivery' : 'deliveries'}? The deliveries stay.`)) return;
+    run(async () => {
+      const result = await clearStopMaps(dayId, { stopIds: ids });
+      setPicked((prev) => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+      if (ids.includes(editId)) {
+        setDraft((current) => (current ? { ...current, mapsUrl: '' } : current));
+      }
+      setMessage(result.mapsStale
+        ? 'Map deleted. Clear the sent map on that fleet, then send it again.'
+        : 'Map deleted.');
+    });
+  }
+
   function clearSentMap(route, title) {
     if (!window.confirm(`Clear the sent map for ${title}? The deliveries stay.`)) return;
     run(() => clearRouteMaps(route._id), 'Sent map cleared. Send this fleet again when the load is right.');
@@ -379,7 +400,7 @@ export default function DayDetail() {
           </p>
           <p className="hint">
             {moving
-              ? 'Tick the deliveries that do not fit, then move them.'
+              ? 'Tick a delivery, then move it or delete its map.'
               : 'Tap a delivery to change it. Send the fleet when the load is right.'}
           </p>
         </div>
@@ -427,7 +448,7 @@ export default function DayDetail() {
         <section className="card delivery-move">
           <div>
             <strong>{picked.size} selected</strong>
-            <p className="hint">Move them onto another fleet when this one is too full.</p>
+            <p className="hint">Move them if the fleet is too full, or delete their maps. The deliveries stay.</p>
           </div>
           <div className="delivery-actions">
             <label className="field">
@@ -450,6 +471,14 @@ export default function DayDetail() {
               onClick={() => run(() => moveChosen([...picked], moveTarget))}
             >
               Move
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy}
+              onClick={() => deleteMaps([...picked])}
+            >
+              Delete
             </button>
             <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setPicked(new Set())}>
               Clear
@@ -604,7 +633,7 @@ export default function DayDetail() {
                 const url = mapsUrl(stop);
                 return (
                   <li key={stop._id} className={stop.location?.needsPin ? 'delivery-item needs-pin' : 'delivery-item'}>
-                    <div className={['delivery-row', open ? 'is-open' : '', moving ? '' : 'no-pick'].filter(Boolean).join(' ')}>
+                    <div className={['delivery-row', open ? 'is-open' : '', moving ? '' : 'no-pick', moving && picked.has(stop._id) ? 'has-delete' : ''].filter(Boolean).join(' ')}>
                       {moving && (
                         <label className="delivery-pick">
                           <input
@@ -625,11 +654,22 @@ export default function DayDetail() {
                           <strong>{index + 1}. {stop.customerName}</strong>
                           {stop.isNewCustomer && <span className="badge badge-warn">New</span>}
                           {stop.location?.needsPin && <span className="badge badge-warn">Check location</span>}
+                          {stop.location?.hideMap && <span className="badge badge-neutral">No map</span>}
                           <span className="delivery-edit-cue">{open ? 'Close' : 'Edit'}</span>
                         </span>
                         <span className="muted">{stop.location?.address || stop.location?.placeName || 'No address yet'}</span>
                         <span className="muted">{itemsLabel(stop) || 'No products yet'}</span>
                       </button>
+                      {moving && picked.has(stop._id) && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={busy || stop.location?.hideMap}
+                          onClick={() => deleteMaps([stop._id])}
+                        >
+                          Delete
+                        </button>
+                      )}
                       <StatusBadge status={stop.status} />
                     </div>
 
@@ -679,7 +719,11 @@ export default function DayDetail() {
                               placeholder="Paste a Google Maps link"
                               onChange={(event) => setDraft({ ...draft, mapsUrl: event.target.value })}
                             />
-                            <span className="hint">Blank keeps the pin already saved for this customer.</span>
+                            <span className="hint">
+                              {stop.location?.hideMap
+                                ? 'This map is deleted. Paste a new link and save to put it back.'
+                                : 'Blank keeps the pin already saved for this customer.'}
+                            </span>
                           </label>
                           <label className="field delivery-span">
                             <span className="field-label">Note</span>
@@ -757,6 +801,14 @@ export default function DayDetail() {
 
                         <div className="delivery-actions">
                           <button type="submit" className="btn btn-primary" disabled={busy}>Save delivery</button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={busy || stop.location?.hideMap}
+                            onClick={() => deleteMaps([stop._id])}
+                          >
+                            Delete map
+                          </button>
                           {url && (
                             <a className="btn btn-secondary" href={url} target="_blank" rel="noreferrer">Open map</a>
                           )}

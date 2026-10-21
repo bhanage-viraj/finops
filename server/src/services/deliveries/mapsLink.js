@@ -8,6 +8,7 @@ function encodeQuery(value) {
 
 export function stopQuery(stop) {
   const loc = stop.location || {};
+  if (loc.hideMap) return null;
   if (loc.lat != null && loc.lng != null && Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) {
     return `${loc.lat},${loc.lng}`;
   }
@@ -24,6 +25,7 @@ export function stopQuery(stop) {
 
 export function mapsSearchUrl(stop) {
   const loc = stop.location || {};
+  if (loc.hideMap) return '';
   if (loc.mapsUrl && /maps\.app\.goo\.gl|google\.com\/maps|goo\.gl\/maps/i.test(loc.mapsUrl)) {
     return loc.mapsUrl;
   }

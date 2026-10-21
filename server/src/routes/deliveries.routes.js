@@ -12,6 +12,7 @@ import {
   move,
   moveMany,
   removeStops,
+  removeStopMaps,
   patchStop,
   clearMaps,
   status,
@@ -65,6 +66,7 @@ export function createDeliveriesRouter(env) {
   router.post('/:dayId/close', ops, close());
   router.post('/:dayId/moves', ops, moveMany());
   router.post('/:dayId/stops/delete', ops, removeStops());
+  router.post('/:dayId/maps/delete', ops, removeStopMaps());
   router.post('/:dayId/cartrack/sync', ops, syncCartrack(env));
   router.get('/:dayId/cartrack/gps-suggestions', ops, gpsSuggestions(env));
 

@@ -106,6 +106,7 @@ export async function setStopLocation(stopId, user, body) {
     lng,
     source,
     mapsUrl: mapsUrl || mapsSearchUrl({ location: { lat, lng } }),
+    hideMap: false,
     placeName: body.placeName || stop.location?.placeName || '',
     address: body.address || stop.location?.address || '',
     confidence: 'high',
@@ -340,6 +341,51 @@ export async function deleteStops(dayId, user, { stopIds } = {}) {
   return { deleted: ids.length };
 }
 
+/** Drop the map link on the chosen deliveries. The deliveries and the fleet stay. */
+export async function clearStopMaps(dayId, user, { stopIds } = {}) {
+  const ids = stopIdList(stopIds);
+  const stops = await DeliveryStop.find({ _id: { $in: ids }, dayId });
+  if (stops.length !== ids.length) throw httpError(400, 'One of those stops is not on this day.');
+  const routeIds = new Set();
+  for (const stop of stops) {
+    const location = stop.location?.toObject?.() || { ...(stop.location || {}) };
+    location.mapsUrl = '';
+    location.hideMap = true;
+    stop.location = location;
+    stop.markModified('location');
+    if (stop.status === 'map_sent') {
+      stop.status = 'planned';
+      stop.statusHistory.push({
+        status: 'planned',
+        source: 'admin',
+        userId: user?._id || null,
+        at: new Date(),
+        note: 'Map deleted after it was sent.',
+      });
+    }
+    await stop.save();
+    if (stop.routeId) routeIds.add(String(stop.routeId));
+  }
+  let mapsStale = false;
+  for (const rid of routeIds) {
+    const route = await DeliveryRoute.findById(rid);
+    if (!route) continue;
+    if (route.mapSentAt || route.mapsFlag) {
+      route.mapsStale = true;
+      mapsStale = true;
+      await route.save();
+    }
+  }
+  await writeAudit({
+    userId: user?._id,
+    action: 'clear_stop_maps',
+    entity: 'deliveryDays',
+    entityId: dayId,
+    after: { cleared: ids.length, mapsStale },
+  });
+  return { cleared: ids.length, mapsStale };
+}
+
 function itemSnapshot(items) {
   return (items || []).map((item) => ({
     productName: item.productName,
@@ -369,7 +415,10 @@ export async function updateStop(stopId, user, body) {
   if (body.address != null || body.mapsUrl != null) {
     const location = stop.location?.toObject?.() || { ...(stop.location || {}) };
     if (body.address != null) location.address = String(body.address).trim().slice(0, 300);
-    if (body.mapsUrl != null) location.mapsUrl = String(body.mapsUrl).trim().slice(0, 800);
+    if (body.mapsUrl != null) {
+      location.mapsUrl = String(body.mapsUrl).trim().slice(0, 800);
+      if (location.mapsUrl) location.hideMap = false;
+    }
     stop.location = location;
     stop.markModified('location');
   }
