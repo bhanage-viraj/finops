@@ -27,6 +27,21 @@ export function datesFromMessage(text, today = new Date()) {
   return { from: '', to: '' };
 }
 
+/** "all the dues" means every unpaid invoice, not a payment with that name. */
+export function asksForAllDates(text) {
+  return /\ball (the )?(dues|invoices|dates|tagihan)\b|\bsemua (tagihan|invoice)/i.test(String(text || ''));
+}
+
+export function asksToListDues(text) {
+  const source = String(text || '');
+  const mentionsDues = /\b(dues|unpaid|invoices|tagihan)\b/i.test(source);
+  return mentionsDues && (/\b(list|show)\b/i.test(source) || asksForAllDates(source) || /\bunpaid invoices\b|\bsemua tagihan\b/i.test(source));
+}
+
+function asksForThisTransfer(text) {
+  return /\bthis (transfer|payment|screenshot)\b/i.test(String(text || ''));
+}
+
 function isoOrEmpty(value) {
   const text = String(value || '').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : '';
@@ -52,14 +67,35 @@ export function normalizeIntent(raw = {}, message = '', today = new Date()) {
   const paymentId = /^[a-f0-9]{24}$/i.test(String(raw.paymentId || '').trim())
     ? String(raw.paymentId).trim()
     : '';
-  return {
+  return applyMessageHints({
     intent,
     customerName: String(raw.customerName || '').trim().slice(0, 200),
     from,
     to,
     paymentId,
     reply: String(raw.reply || '').trim().slice(0, 1500),
-  };
+  }, message);
+}
+
+/**
+ * The typed sentence wins over the model's tool when the words are clear.
+ * "AN Balinest" is a group of invoices. It is not the name of a bank payment.
+ */
+export function applyMessageHints(intent, message = '') {
+  const next = { ...intent };
+  const text = String(message || '');
+  if (asksForAllDates(text) && !/this month|bulan ini/i.test(text)) {
+    next.from = '';
+    next.to = '';
+  }
+  if (!next.customerName) {
+    const named = text.match(/\b((?:AN|PT|CV|UD)\s+[A-Za-z0-9][\w&.-]*)/);
+    if (named) next.customerName = named[1];
+  }
+  if (asksToListDues(text) && !asksForThisTransfer(text)) next.intent = 'find_invoices';
+  else if (/\blink\b/i.test(text)) next.intent = 'link_invoices';
+  else if (/\brecord\b/i.test(text)) next.intent = 'record_payment';
+  return next;
 }
 
 /**

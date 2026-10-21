@@ -4,8 +4,7 @@ import { fileURLToPath } from 'node:url';
 import AssistantProposal from '../../models/AssistantProposal.js';
 import { completeText } from '../ai/visionClient.js';
 import {
-  approvePayment, customerSearchRank, groupNameRank, listOpenInvoices, listPayments,
-  setPaymentMatch, verifyPayment,
+  approvePayment, listOpenInvoices, listPayments, setPaymentMatch, verifyPayment,
 } from '../payments/paymentService.js';
 import { writeAudit } from '../audit/auditLogger.js';
 import { httpError } from '../../utils/http.js';
@@ -50,8 +49,14 @@ function formatDay(iso) {
 }
 
 function pagePaymentId(page) {
-  const match = String(page || '').match(/^\/payments\/([a-f0-9]{24})$/i);
+  const match = String(page || '').match(/\/payments\/([a-f0-9]{24})/i);
   return match ? match[1] : '';
+}
+
+function openPaymentId(body, page) {
+  const fromClient = String(body.openPaymentId || '').trim();
+  if (/^[a-f0-9]{24}$/i.test(fromClient)) return fromClient;
+  return pagePaymentId(page);
 }
 
 function normalizeHistory(history) {
@@ -62,18 +67,12 @@ function normalizeHistory(history) {
   })).filter((row) => row.text);
 }
 
-function nameHits(query, payment) {
-  const name = payment.confirmed?.customerName || payment.ai?.sender || '';
-  if (!query || !name) return false;
-  return groupNameRank(query, name) != null || customerSearchRank(query, name) != null;
-}
-
 function rangeLabel(from, to) {
   if (from && to) return `${formatDay(from)} to ${formatDay(to)}`;
   return 'all dates';
 }
 
-function invoiceSummary(rows) {
+function invoiceSummary(rows, limit = 24) {
   const groups = [];
   const index = new Map();
   for (const row of rows) {
@@ -88,10 +87,10 @@ function invoiceSummary(rows) {
   const lines = [];
   let shown = 0;
   for (const group of groups) {
-    if (shown >= 12) break;
+    if (shown >= limit) break;
     lines.push(group.name);
     for (const row of group.rows) {
-      if (shown >= 12) break;
+      if (shown >= limit) break;
       lines.push(`- ${row.invoiceNo} · ${formatDay(row.date) || 'no date'} · ${rupiah(row.remaining)}`);
       shown += 1;
     }
@@ -129,19 +128,16 @@ async function defaultParseIntent({ env, user, message, history, page, today }) 
   return normalizeIntent(result.json, message, today);
 }
 
-function pickPayment(payments, { paymentId, customerName, pageId }) {
+function pickPayment(payments, { paymentId, pageId }) {
   const open = (payments || []).filter((row) => !['approved', 'rejected'].includes(row.status));
-  const wanted = paymentId || pageId;
+  const wanted = pageId || paymentId;
   if (wanted) {
     const found = open.find((row) => String(row.id) === wanted);
-    return found || { error: 'That payment is not open.' };
+    return found || { error: 'Open the transfer this should apply to, then ask again.' };
   }
-  if (!customerName) return { error: 'Say which customer the transfer is for.' };
-  const named = open.filter((row) => nameHits(customerName, row));
-  if (named.length === 1) return named[0];
-  if (named.length === 0) return { error: `No open payment matches ${customerName}.` };
-  const choices = named.slice(0, 5).map((row) => row.confirmed?.customerName || row.id).join(', ');
-  return { error: `Several open payments match. Open the right one, then ask again. Matches: ${choices}.` };
+  if (open.length === 1) return open[0];
+  if (!open.length) return { error: 'No open payments. Add the bank screenshot first.' };
+  return { error: 'Open the transfer this should apply to, then ask again.' };
 }
 
 async function rememberProposal(Proposal, doc) {
@@ -162,6 +158,7 @@ export async function handleAssistantMessage({ user, env, body = {}, today = new
   if (!message) throw httpError(400, 'Write what you want done.');
   const history = normalizeHistory(body.history);
   const page = String(body.path || '').slice(0, 200);
+  const pageId = openPaymentId(body, page);
   const parseIntent = deps.parseIntent || defaultParseIntent;
   const payments = deps.listPayments || listPayments;
   const invoices = deps.listOpenInvoices || listOpenInvoices;
@@ -209,21 +206,23 @@ export async function handleAssistantMessage({ user, env, body = {}, today = new
     const total = rows.reduce((sum, row) => sum + (Number.isInteger(row.remaining) ? row.remaining : 0), 0);
     const villas = new Set(rows.map((row) => row.customerName).filter(Boolean)).size;
     const tail = pageResult.truncated ? '\nToo many invoices match. Narrow the dates.' : '';
+    const next = pageId
+      ? `\nSay “link ${intent.customerName} to this transfer” if this bank transfer pays them.`
+      : '\nOpen the bank transfer, then say “link them to this transfer”.';
     return {
-      reply: `${rows.length} unpaid invoice${rows.length === 1 ? '' : 's'} · ${villas} villa${villas === 1 ? '' : 's'} · ${rupiah(total)} · ${rangeLabel(intent.from, intent.to)}.\n${invoiceSummary(rows)}${tail}`,
+      reply: `${rows.length} unpaid invoice${rows.length === 1 ? '' : 's'} · ${villas} villa${villas === 1 ? '' : 's'} · ${rupiah(total)} · ${rangeLabel(intent.from, intent.to)}.\n${invoiceSummary(rows)}${tail}${next}`,
       proposal: null,
     };
   }
 
   if (intent.intent === 'link_invoices') {
-    if (intent.customerName.length < 2 && !intent.paymentId && !pagePaymentId(page)) {
+    if (intent.customerName.length < 2 && !intent.paymentId && !pageId) {
       return { reply: 'Which customer should I link? For example AN Balinest, and the dates.', proposal: null };
     }
     const openPayments = await payments(user);
     const payment = pickPayment(openPayments, {
       paymentId: intent.paymentId,
-      customerName: intent.customerName,
-      pageId: pagePaymentId(page),
+      pageId,
     });
     if (payment.error) return { reply: payment.error, proposal: null };
     const pageResult = await invoices(env, intent.customerName || payment.confirmed?.customerName || '', {
@@ -237,7 +236,9 @@ export async function handleAssistantMessage({ user, env, body = {}, today = new
       invoices: pageResult.invoices || [],
       paymentAmount: payment.amountReceived,
     });
-    if (!plan.ok) return { reply: plan.error, proposal: null };
+    if (!plan.ok) {
+      return { reply: `${plan.error}\n${invoiceSummary(pageResult.invoices || [])}`, proposal: null };
+    }
     const name = intent.customerName || payment.confirmed?.customerName || 'this customer';
     const summary = [
       `Link ${plan.invoiceIds.length} invoice${plan.invoiceIds.length === 1 ? '' : 's'} (${plan.customerCount} villa${plan.customerCount === 1 ? '' : 's'}) for ${name}, ${rangeLabel(intent.from, intent.to)}.`,
@@ -267,8 +268,7 @@ export async function handleAssistantMessage({ user, env, body = {}, today = new
     const openPayments = await payments(user);
     const payment = pickPayment(openPayments, {
       paymentId: intent.paymentId,
-      customerName: intent.customerName,
-      pageId: pagePaymentId(page),
+      pageId,
     });
     if (payment.error) return { reply: payment.error, proposal: null };
     if (!payment.matchedInvoiceId) {

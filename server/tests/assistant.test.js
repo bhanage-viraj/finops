@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { confirmAssistantProposal, handleAssistantMessage } from '../src/services/assistant/assistantService.js';
-import { datesFromMessage, normalizeIntent, planInvoiceLink } from '../src/services/assistant/intent.js';
+import { applyMessageHints, datesFromMessage, normalizeIntent, planInvoiceLink } from '../src/services/assistant/intent.js';
 import { MULTI_CUSTOMER_EXCESS } from '../src/services/payments/paymentService.js';
 
 const TODAY = new Date(2026, 9, 21);
@@ -91,6 +91,104 @@ test('a group request prepares a confirm step and does not save yet', async () =
   assert.equal(result.proposal.id, PROPOSAL_ID);
   assert.match(result.reply, /2 invoices/);
   assert.match(result.reply, /bank statement/i);
+});
+
+test('listing dues does not search for a payment with the group name', async () => {
+  let queried = null;
+  const result = await handleAssistantMessage({
+    user: { id: 'acct1', role: 'accountant' },
+    env: {},
+    body: {
+      message: 'link AN Balinest list all the dues',
+      path: `/payments/${PAYMENT_ID}`,
+      openPaymentId: PAYMENT_ID,
+    },
+    today: TODAY,
+  }, {
+    parseIntent: async () => ({
+      intent: 'link_invoices',
+      customerName: 'AN Balinest',
+      from: '2026-10-01',
+      to: '2026-10-31',
+      paymentId: '',
+      reply: '',
+    }),
+    listPayments: async () => {
+      throw new Error('listing dues must not look up payments');
+    },
+    listOpenInvoices: async (_env, name, options) => {
+      queried = { name, options };
+      return {
+        truncated: false,
+        invoices: [
+          { id: '11', invoiceNo: 'INV-1', remaining: 100000, date: '2026-09-02', customerName: 'Balinest Villa Kristi', erpCustomerId: '1' },
+          { id: '22', invoiceNo: 'INV-2', remaining: 200000, date: '2026-10-03', customerName: 'Balinest Villa Ubud', erpCustomerId: '2' },
+        ],
+      };
+    },
+  });
+  assert.equal(queried.name, 'AN Balinest');
+  assert.equal(queried.options.fromDate, '');
+  assert.equal(queried.options.toDate, '');
+  assert.equal(result.proposal, null);
+  assert.match(result.reply, /2 unpaid invoices/);
+  assert.match(result.reply, /Balinest Villa Kristi/);
+  assert.doesNotMatch(result.reply, /No open payment matches/);
+});
+
+test('link to this transfer uses the open payment even when its name is different', async () => {
+  const created = [];
+  const result = await handleAssistantMessage({
+    user: { id: 'acct1', role: 'accountant' },
+    env: {},
+    body: { message: 'link AN Balinest to this transfer', path: `/payments/${PAYMENT_ID}` },
+    today: TODAY,
+  }, {
+    parseIntent: async () => ({
+      intent: 'answer',
+      customerName: '',
+      from: '',
+      to: '',
+      paymentId: '',
+      reply: 'No open payment matches AN Balinest.',
+    }),
+    listPayments: async () => [{
+      id: PAYMENT_ID,
+      status: 'matched',
+      amountReceived: 300000,
+      confirmed: { customerName: 'Chotto Motto Ubud' },
+    }],
+    listOpenInvoices: async () => ({
+      truncated: false,
+      invoices: [
+        { id: '11', invoiceNo: 'INV-1', remaining: 100000, date: '2026-10-02', customerName: 'Balinest Villa Kristi', erpCustomerId: '1' },
+        { id: '22', invoiceNo: 'INV-2', remaining: 200000, date: '2026-10-03', customerName: 'Balinest Villa Ubud', erpCustomerId: '2' },
+      ],
+    }),
+    Proposal: {
+      create: async (doc) => {
+        created.push(doc);
+        return { ...doc, _id: PROPOSAL_ID };
+      },
+    },
+  });
+  assert.equal(created[0].args.paymentId, PAYMENT_ID);
+  assert.equal(created[0].args.customerName, 'AN Balinest');
+  assert.equal(result.proposal.tool, 'link_invoices');
+});
+
+test('all the dues clears a guessed month', () => {
+  const intent = applyMessageHints(normalizeIntent({
+    intent: 'link_invoices',
+    customerName: 'AN Balinest',
+    from: '2026-10-01',
+    to: '2026-10-31',
+    paymentId: '',
+    reply: '',
+  }, 'link AN Balinest list all the dues', TODAY), 'link AN Balinest list all the dues');
+  assert.equal(intent.intent, 'find_invoices');
+  assert.equal(intent.from, '');
+  assert.equal(intent.to, '');
 });
 
 test('staff cannot prepare a payment change from chat', async () => {

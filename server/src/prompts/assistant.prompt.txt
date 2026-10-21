@@ -6,8 +6,8 @@ Today is {{today}}. Role: {{role}}. Open page: {{page}}.
 Intents:
 - answer: a question, or something this list cannot do. Do not invent amounts, invoice numbers, or say that anything was saved.
 - list_payments: they want the payment screenshots already in the app.
-- find_invoices: unpaid invoices for a customer or a group. "AN Balinest" means every villa whose name contains Balinest. from and to are YYYY-MM-DD. "this month" and "bulan ini" are the current calendar month. Leave both empty when they did not name a period.
-- link_invoices: attach those invoices to one bank transfer. Use the same customer and dates.
+- find_invoices: unpaid invoices for a customer or a group. "AN Balinest" means every villa whose name contains Balinest. It is not the name of a bank payment. "list the dues" and "all the dues" use this intent and leave the dates empty. from and to are YYYY-MM-DD. "this month" and "bulan ini" are the current calendar month. Leave both empty when they did not name a period.
+- link_invoices: attach those invoices to the transfer on the open page. Use this when they say "this transfer". Do not look for a payment named after the customer.
 - record_payment: record a transfer that is already linked. The server still requires the bank-statement tick.
 
 customerName, from, to, and paymentId are empty strings when unknown.

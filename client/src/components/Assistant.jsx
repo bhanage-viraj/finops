@@ -38,7 +38,13 @@ export default function Assistant() {
     setStatementChecked(false);
     setBusy(true);
     try {
-      const body = await sendAssistantMessage({ message, history, path: location.pathname });
+      const openPaymentId = location.pathname.match(/\/payments\/([a-f0-9]{24})/i)?.[1] || '';
+      const body = await sendAssistantMessage({
+        message,
+        history,
+        path: location.pathname,
+        openPaymentId,
+      });
       setMessages((prev) => [...prev, bubble('assistant', body.reply || 'Done.')]);
       setProposal(body.proposal || null);
     } catch (error) {
@@ -83,8 +89,13 @@ export default function Assistant() {
       {open && (
         <section className="assistant-panel" aria-label="Assistant">
           <div className="assistant-head">
-            <strong>Assistant</strong>
-            <span className="hint">Nothing is saved until you confirm.</span>
+            <div>
+              <strong>Assistant</strong>
+              <span className="hint">Nothing is saved until you confirm.</span>
+            </div>
+            <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>
+              Close
+            </button>
           </div>
           <div className="assistant-log" ref={scroller}>
             {messages.length === 0 && (
@@ -139,14 +150,16 @@ export default function Assistant() {
           </form>
         </section>
       )}
-      <button
-        type="button"
-        className={open ? 'btn btn-secondary assistant-launch' : 'btn btn-primary assistant-launch'}
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        {open ? 'Close' : 'Chat'}
-      </button>
+      {!open && (
+        <button
+          type="button"
+          className="btn btn-primary assistant-launch"
+          aria-expanded={false}
+          onClick={() => setOpen(true)}
+        >
+          Chat
+        </button>
+      )}
     </>
   );
 }

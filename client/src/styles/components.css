@@ -880,8 +880,8 @@ label.btn.is-disabled {
 }
 .assistant-panel {
   position: fixed;
-  right: var(--space-4);
-  bottom: calc(72px + env(safe-area-inset-bottom));
+  left: var(--space-4);
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
   z-index: 30;
   width: min(380px, calc(100vw - 32px));
   max-height: min(70vh, 560px);
@@ -894,7 +894,13 @@ label.btn.is-disabled {
 .assistant-head, .assistant-proposal, .assistant-form {
   padding: var(--space-3) var(--space-4);
 }
-.assistant-head { border-bottom: 1px solid var(--border); }
+.assistant-head {
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+}
 .assistant-head strong { display: block; }
 .assistant-log {
   overflow: auto;
