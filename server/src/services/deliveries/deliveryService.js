@@ -11,7 +11,7 @@ import { httpError } from '../../utils/http.js';
 import { orderStops } from './stopOrder.js';
 import { loadingTotalsObject } from './loadingList.js';
 import { buildRouteWhatsAppMessage, whatsappUrl } from './whatsappMessage.js';
-import { extraFleetName, fleetMapsAfterMove, stopsKeptOnSheet } from './mapsFreshness.js';
+import { extraFleetName, fleetMapsAfterMove, plannedLines, stopsKeptOnSheet } from './mapsFreshness.js';
 import { applyListPrices } from './priceList.js';
 import { mapsSearchUrl } from './mapsLink.js';
 import { coordsFromMapsUrl, parseDms, parsePlusCode, parseDecimalCoords } from './locationResolver.js';
@@ -340,44 +340,100 @@ export async function deleteStops(dayId, user, { stopIds } = {}) {
   return { deleted: ids.length };
 }
 
-/** Remove a fleet. Stops can stay on the day with no fleet, or leave with it. */
-export async function deleteFleet(routeId, user, { alsoStops = false } = {}) {
-  const route = await DeliveryRoute.findById(routeId);
-  if (!route) throw httpError(404, 'Route not found.');
-  const stops = await DeliveryStop.find({ routeId: route._id });
-  if (alsoStops) {
-    const kept = keptMessage(stops);
-    if (kept) throw httpError(400, kept);
-    await DeliveryStop.deleteMany({ routeId: route._id });
-  } else {
-    for (const stop of stops) {
-      stop.routeId = null;
-      if (stop.status === 'map_sent') {
-        stop.status = 'planned';
-        stop.statusHistory.push({
-          status: 'planned',
-          source: 'admin',
-          userId: user?._id || null,
-          at: new Date(),
-          note: 'Fleet removed after the map was sent.',
-        });
+function itemSnapshot(items) {
+  return (items || []).map((item) => ({
+    productName: item.productName,
+    packType: item.packType || '',
+    qty: item.qty == null ? null : item.qty,
+  }));
+}
+
+/** Edit one delivery. The fleet stays. A sent map is marked out of date. */
+export async function updateStop(stopId, user, body) {
+  const stop = await DeliveryStop.findById(stopId);
+  if (!stop) throw httpError(404, 'Stop not found.');
+  const before = {
+    customerName: stop.customerName,
+    note: stop.note || '',
+    address: stop.location?.address || '',
+    mapsUrl: stop.location?.mapsUrl || '',
+    plannedItems: itemSnapshot(stop.plannedItems),
+  };
+
+  if (body.customerName != null) {
+    const name = String(body.customerName).trim().slice(0, 120);
+    if (!name) throw httpError(400, 'The delivery needs a customer name.');
+    stop.customerName = name;
+  }
+  if (body.note != null) stop.note = String(body.note).trim().slice(0, 500);
+  if (body.address != null || body.mapsUrl != null) {
+    const location = stop.location?.toObject?.() || { ...(stop.location || {}) };
+    if (body.address != null) location.address = String(body.address).trim().slice(0, 300);
+    if (body.mapsUrl != null) location.mapsUrl = String(body.mapsUrl).trim().slice(0, 800);
+    stop.location = location;
+    stop.markModified('location');
+  }
+  if (body.plannedItems != null) {
+    let lines;
+    try {
+      lines = plannedLines(body.plannedItems, stop.plannedItems);
+    } catch (err) {
+      throw httpError(400, err.message);
+    }
+    stop.plannedItems = lines;
+    stop.markModified('plannedItems');
+  }
+
+  const afterItems = itemSnapshot(stop.plannedItems);
+  const changed = before.customerName !== stop.customerName
+    || before.note !== (stop.note || '')
+    || before.address !== (stop.location?.address || '')
+    || before.mapsUrl !== (stop.location?.mapsUrl || '')
+    || JSON.stringify(before.plannedItems) !== JSON.stringify(afterItems);
+
+  if (changed && stop.status === 'map_sent') {
+    stop.status = 'planned';
+    stop.statusHistory.push({
+      status: 'planned',
+      source: 'admin',
+      userId: user?._id || null,
+      at: new Date(),
+      note: 'Delivery edited after the map was sent.',
+    });
+  }
+  await stop.save();
+
+  let mapsStale = false;
+  if (stop.routeId) {
+    const route = await DeliveryRoute.findById(stop.routeId);
+    if (route) {
+      const onRoute = await DeliveryStop.find({ routeId: route._id }).sort({ sortIndex: 1 });
+      route.stopOrder = onRoute.map((row) => row._id);
+      route.loadingTotals = loadingTotalsObject(onRoute);
+      if (changed && (route.mapSentAt || route.mapsFlag)) {
+        route.mapsStale = true;
+        mapsStale = true;
       }
-      await stop.save();
+      await route.save();
     }
   }
-  const dayId = route.dayId;
-  const areaName = route.areaName;
-  await route.deleteOne();
-  await refreshDaySummary(dayId);
+  await refreshDaySummary(stop.dayId);
   await writeAudit({
     userId: user?._id,
-    action: 'delete_fleet',
-    entity: 'deliveryRoutes',
-    entityId: routeId,
-    before: { areaName, stops: stops.length },
-    after: { alsoStops: Boolean(alsoStops) },
+    action: 'update',
+    entity: 'deliveryStops',
+    entityId: stop._id,
+    before,
+    after: {
+      customerName: stop.customerName,
+      note: stop.note || '',
+      address: stop.location?.address || '',
+      mapsUrl: stop.location?.mapsUrl || '',
+      plannedItems: afterItems,
+      mapsStale,
+    },
   });
-  return { deleted: true, stops: stops.length, alsoStops: Boolean(alsoStops) };
+  return { stop: stop.toObject(), mapsStale };
 }
 
 /** Drop the driver's route map. Customer pins stay, so a new send can be built from the current load. */

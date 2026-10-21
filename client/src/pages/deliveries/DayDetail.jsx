@@ -14,8 +14,8 @@ import {
   deleteDeliveryDay,
   clearRouteMaps,
   deleteStops,
-  deleteFleet,
   updateRoute,
+  updateStop,
 } from '../../api/deliveries.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { formatRupiah } from '../../utils/formatRupiah.js';
@@ -29,13 +29,6 @@ function mapsUrl(stop) {
   }
   const q = encodeURIComponent([loc.placeName, loc.address, 'Bali'].filter(Boolean).join(', '));
   return q ? `https://www.google.com/maps/search/?api=1&query=${q}` : '';
-}
-
-function stopWhatsAppUrl(stop) {
-  const url = mapsUrl(stop);
-  if (!url) return '';
-  const text = `*${stop.customerName}*\n${url}`;
-  return `https://web.whatsapp.com/send?text=${encodeURIComponent(text)}`;
 }
 
 function cargoLabel(totals) {
@@ -54,7 +47,7 @@ function fleetLabel(route, stopCount) {
   const bits = [route.areaName || 'Fleet'];
   if (route.vehicleLabel) bits.push(route.vehicleLabel);
   if (drivers) bits.push(drivers);
-  if (stopCount != null) bits.push(`${stopCount} stops`);
+  if (stopCount != null) bits.push(`${stopCount} deliveries`);
   return bits.join(' · ');
 }
 
@@ -68,19 +61,44 @@ function itemsLabel(stop) {
     .join(', ');
 }
 
+function wholeQty(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  if (!/^\d+$/.test(text)) throw new Error('Quantity must be a whole number.');
+  return Number(text);
+}
+
+function draftFromStop(stop) {
+  const items = (stop.plannedItems || []).map((item, index) => ({
+    key: `${index}-${item.productName || 'item'}`,
+    productName: item.productName || '',
+    packType: item.packType || '',
+    qty: item.qty == null ? '' : String(item.qty),
+  }));
+  return {
+    customerName: stop.customerName || '',
+    note: stop.note || '',
+    address: stop.location?.address || '',
+    mapsUrl: stop.location?.mapsUrl || '',
+    routeId: stop.routeId ? String(stop.routeId) : 'unassigned',
+    items: items.length ? items : [{ key: 'new', productName: '', packType: '', qty: '' }],
+  };
+}
+
+function keptOnSheet(stop) {
+  return stop.status === 'delivered' || stop.status === 'nota_checked';
+}
+
 export default function DayDetail() {
   const { dayId } = useParams();
   const navigate = useNavigate();
-  const [view, setView] = useState('areas'); // areas | all
   const [day, setDay] = useState(null);
   const [routes, setRoutes] = useState([]);
   const [stops, setStops] = useState([]);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [pinStop, setPinStop] = useState(null);
-  const [linkDraft, setLinkDraft] = useState('');
-  const [sendQueue, setSendQueue] = useState([]); // route ids left to send
+  const [sendQueue, setSendQueue] = useState([]);
   const [preview, setPreview] = useState(null);
   const [picked, setPicked] = useState(() => new Set());
   const [moveTarget, setMoveTarget] = useState('');
@@ -89,7 +107,8 @@ export default function DayDetail() {
   const [fleetName, setFleetName] = useState('');
   const [vehicleId, setVehicleId] = useState('');
   const [driverId, setDriverId] = useState('');
-  const [menuKey, setMenuKey] = useState(0);
+  const [editId, setEditId] = useState('');
+  const [draft, setDraft] = useState(null);
   const notaRefs = useRef({});
 
   const load = useCallback(async () => {
@@ -103,11 +122,12 @@ export default function DayDetail() {
     setError('');
     setPicked(new Set());
     setMoveTarget('');
+    setEditId('');
+    setDraft(null);
     load().catch((err) => setError(err.message));
     fetchDeliveryMeta().then((body) => {
       setMeta({ vehicles: body.vehicles || [], drivers: body.drivers || [] });
     }).catch(() => {});
-    // Pull Cartrack statuses in the background (read-only).
     syncCartrack(dayId).then(() => load()).catch(() => {});
   }, [dayId, load]);
 
@@ -128,8 +148,7 @@ export default function DayDetail() {
     const sections = routes.map((route) => ({
       key: String(route._id),
       route,
-      title: route.areaName || 'Area',
-      subtitle: [route.vehicleLabel, (route.driverNames || []).join(' & ')].filter(Boolean).join(' · '),
+      title: route.areaName || 'Fleet',
       stops: stopsByRoute.get(String(route._id)) || [],
     }));
     const loose = stopsByRoute.get('none') || [];
@@ -137,8 +156,7 @@ export default function DayDetail() {
       sections.push({
         key: 'none',
         route: null,
-        title: 'Unassigned',
-        subtitle: 'Not matched to an area yet — move into an area below',
+        title: 'Not on a fleet',
         stops: loose,
       });
     }
@@ -161,10 +179,23 @@ export default function DayDetail() {
   }
 
   function openCustomise(route) {
+    setEditId('');
+    setDraft(null);
     setCustomId(String(route._id));
     setFleetName(route.areaName || '');
     setVehicleId(route.vehicleId ? String(route.vehicleId) : '');
     setDriverId(route.driverIds?.[0] ? String(route.driverIds[0]) : '');
+  }
+
+  function openDelivery(stop) {
+    setCustomId('');
+    if (editId === stop._id) {
+      setEditId('');
+      setDraft(null);
+      return;
+    }
+    setEditId(stop._id);
+    setDraft(draftFromStop(stop));
   }
 
   async function saveCustomise(routeId) {
@@ -174,24 +205,6 @@ export default function DayDetail() {
       driverIds: driverId ? [driverId] : [],
     });
     setCustomId('');
-    setMessage('Fleet updated.');
-  }
-
-  async function onFleetDelete(section, choice) {
-    if (choice === 'maps') {
-      if (!window.confirm(`Delete the maps for ${section.title}? Customer pins stay.`)) return;
-      await run(() => clearRouteMaps(section.route._id), 'Maps deleted. Send this fleet again when the load is right.');
-      return;
-    }
-    if (choice === 'fleet') {
-      if (!window.confirm(`Remove ${section.title}? Its stops stay on the day, with no fleet.`)) return;
-      await run(() => deleteFleet(section.route._id, { alsoStops: false }), 'Fleet removed. The stops are unassigned.');
-      return;
-    }
-    if (choice === 'stops') {
-      if (!window.confirm(`Delete ${section.title} and its stops? Delivered stops cannot be deleted.`)) return;
-      await run(() => deleteFleet(section.route._id, { alsoStops: true }), 'Fleet and its stops deleted.');
-    }
   }
 
   async function moveChosen(stopIds, routeId) {
@@ -199,8 +212,8 @@ export default function DayDetail() {
     setPicked(new Set());
     setMoveTarget('');
     setMessage(result.mapsStale
-      ? 'Moved. Delete the maps on the fleets that already had one, then send them again.'
-      : `Moved ${result.moved} stop${result.moved === 1 ? '' : 's'}.`);
+      ? 'Moved. Clear the sent map on that fleet, then send it again.'
+      : `Moved ${result.moved} ${result.moved === 1 ? 'delivery' : 'deliveries'}.`);
   }
 
   function togglePicked(stopId) {
@@ -223,12 +236,38 @@ export default function DayDetail() {
     });
   }
 
-  async function saveLocation(stopId, payload) {
-    await run(async () => {
-      await setStopLocation(stopId, payload);
-      setPinStop(null);
-      setLinkDraft('');
-    }, 'Location saved.');
+  async function saveDelivery(stop) {
+    const result = await updateStop(stop._id, {
+      customerName: draft.customerName,
+      note: draft.note,
+      address: draft.address,
+      mapsUrl: draft.mapsUrl,
+      plannedItems: draft.items.map((item) => ({
+        productName: item.productName,
+        packType: item.packType,
+        qty: wholeQty(item.qty),
+      })),
+    });
+    const nextUrl = draft.mapsUrl.trim();
+    const prevUrl = stop.location?.mapsUrl || '';
+    if (nextUrl && nextUrl !== prevUrl) {
+      try {
+        await setStopLocation(stop._id, { mapsUrl: nextUrl, address: draft.address });
+      } catch {
+        // The link is already stored. A pin is filled when the link can be read.
+      }
+    }
+    const current = stop.routeId ? String(stop.routeId) : 'unassigned';
+    let movedStale = false;
+    if (draft.routeId !== current) {
+      const moved = await moveStops(dayId, { stopIds: [stop._id], routeId: draft.routeId });
+      movedStale = Boolean(moved.mapsStale);
+    }
+    setEditId('');
+    setDraft(null);
+    setMessage(result.mapsStale || movedStale
+      ? 'Saved. Clear the sent map on that fleet, then send it again.'
+      : 'Delivery saved.');
   }
 
   async function openAreaSend(routeId) {
@@ -239,7 +278,7 @@ export default function DayDetail() {
       setPreview({ routeId, ...msg });
       await markMapSent(routeId);
       window.open(msg.whatsappUrl, '_blank', 'noopener,noreferrer');
-      setMessage('WhatsApp Web opened for this area. Attach nothing — maps are in the message.');
+      setMessage('WhatsApp opened for this fleet. The maps are in the message.');
       await load();
     } catch (err) {
       setError(err.message);
@@ -249,15 +288,15 @@ export default function DayDetail() {
   }
 
   async function startSendAllAreas() {
-    const ids = routes.map((r) => String(r._id));
+    const ids = routes.map((route) => String(route._id));
     if (!ids.length) {
-      setError('No areas to send.');
+      setError('No fleets to send.');
       return;
     }
     setSendQueue(ids.slice(1));
     await openAreaSend(ids[0]);
     if (ids.length > 1) {
-      setMessage(`Sent area 1 of ${ids.length}. Click “Send next area” for the rest.`);
+      setMessage(`Opened fleet 1 of ${ids.length}. Send the next fleet when this chat is done.`);
     }
   }
 
@@ -267,9 +306,9 @@ export default function DayDetail() {
     setSendQueue(rest);
     await openAreaSend(next);
     if (rest.length) {
-      setMessage(`Sent. ${rest.length} area${rest.length === 1 ? '' : 's'} left — click “Send next area”.`);
+      setMessage(`${rest.length} ${rest.length === 1 ? 'fleet' : 'fleets'} left.`);
     } else {
-      setMessage('All areas opened in WhatsApp Web.');
+      setMessage('Every fleet has been opened in WhatsApp.');
     }
   }
 
@@ -278,18 +317,17 @@ export default function DayDetail() {
     await run(async () => {
       const result = await uploadNota(stopId, file, false);
       if (result?.nota?._id || result?.stop) {
-        // Auto-confirm when AI read succeeded with no hard block.
         try {
           await confirmNota(stopId, {});
         } catch {
-          // Keep draft if confirm needs a person.
+          // Keep the draft when a person still has to confirm it.
         }
       }
-    }, 'Nota uploaded — quantities updated when the check passed.');
+    }, 'Nota uploaded.');
   }
 
   async function onDeleteSheet() {
-    if (!window.confirm(`Delete sheet ${day?.date || ''}? This removes all stops and areas for that day.`)) return;
+    if (!window.confirm(`Delete the sheet for ${day?.date || 'this day'}? This removes the fleets and the deliveries.`)) return;
     setBusy(true);
     setError('');
     try {
@@ -301,6 +339,13 @@ export default function DayDetail() {
     }
   }
 
+  function setItem(key, patch) {
+    setDraft((current) => ({
+      ...current,
+      items: current.items.map((item) => (item.key === key ? { ...item, ...patch } : item)),
+    }));
+  }
+
   if (!day) {
     return (
       <div className="page">
@@ -310,165 +355,26 @@ export default function DayDetail() {
     );
   }
 
-  function renderStopRows(list, showAreaMove) {
-    return list.map((stop, idx) => {
-      const url = mapsUrl(stop);
-      const wa = stopWhatsAppUrl(stop);
-      return (
-        <tr key={stop._id} className={stop.location?.needsPin ? 'sheet-row-warn' : undefined}>
-          <td className="sheet-pick">
-            <input
-              type="checkbox"
-              checked={picked.has(stop._id)}
-              aria-label={`Select ${stop.customerName}`}
-              onChange={() => togglePicked(stop._id)}
-            />
-          </td>
-          <td className="sheet-num">{idx + 1}</td>
-          <td>
-            <strong>{stop.customerName}</strong>
-            {stop.isNewCustomer && <span className="badge badge-warn"> NEW</span>}
-            {stop.location?.needsPin && <span className="badge badge-warn"> CEK LOKASI</span>}
-            <div className="muted sheet-sub">{stop.location?.address || stop.location?.placeName || '—'}</div>
-          </td>
-          <td className="sheet-items">{itemsLabel(stop) || '—'}</td>
-          <td><StatusBadge status={stop.status} /></td>
-          <td className="sheet-actions">
-            {url ? (
-              <a className="btn btn-secondary btn-compact" href={url} target="_blank" rel="noreferrer">Map</a>
-            ) : (
-              <span className="muted">No map</span>
-            )}
-            {wa && (
-              <a className="btn btn-primary btn-compact" href={wa} target="_blank" rel="noreferrer">Send</a>
-            )}
-          </td>
-          <td className="sheet-actions">
-            <button
-              type="button"
-              className="btn btn-secondary btn-compact"
-              disabled={busy}
-              onClick={() => notaRefs.current[stop._id]?.click()}
-            >
-              Nota
-            </button>
-            <input
-              ref={(el) => { notaRefs.current[stop._id] = el; }}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = '';
-                if (file) onNota(stop._id, file);
-              }}
-            />
-            {showAreaMove && (
-              <select
-                className="sheet-move"
-                value={stop.routeId || 'unassigned'}
-                disabled={busy}
-                aria-label={`Move ${stop.customerName} to another fleet`}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value === (stop.routeId || 'unassigned')) return;
-                  run(() => moveChosen([stop._id], value));
-                }}
-              >
-                <option value="new">New fleet</option>
-                <option value="unassigned">Unassigned</option>
-                {routes.map((route) => (
-                  <option key={route._id} value={route._id}>
-                    {fleetLabel(route, (stopsByRoute.get(String(route._id)) || []).length)}
-                  </option>
-                ))}
-              </select>
-            )}
-          </td>
-          <td>
-            {stop.location?.needsPin && (
-              <div className="sheet-fix">
-                <input
-                  placeholder="Paste Maps link"
-                  value={pinStop === stop._id ? linkDraft : ''}
-                  onChange={(e) => { setPinStop(stop._id); setLinkDraft(e.target.value); }}
-                  onFocus={() => setPinStop(stop._id)}
-                />
-                <button
-                  type="button"
-                  className="btn btn-primary btn-compact"
-                  disabled={busy || pinStop !== stop._id || !linkDraft}
-                  onClick={() => saveLocation(stop._id, { mapsUrl: linkDraft })}
-                >
-                  Save
-                </button>
-                {pinStop === stop._id && (
-                  <LocationMap
-                    address={stop.location?.address}
-                    initial={stop.location?.lat != null ? { lat: stop.location.lat, lng: stop.location.lng } : null}
-                    onPick={(coords) => saveLocation(stop._id, coords)}
-                  />
-                )}
-              </div>
-            )}
-            {!stop.location?.needsPin && (
-              <button
-                type="button"
-                className="linkish"
-                disabled={busy}
-                onClick={() => run(
-                  () => setStopStatus(stop._id, { status: stop.status === 'delivered' ? 'otw' : 'delivered', source: 'admin' }),
-                  'Status updated.',
-                )}
-              >
-                {stop.status === 'delivered' || stop.status === 'nota_checked' ? 'Undo delivered' : 'Mark delivered'}
-              </button>
-            )}
-          </td>
-        </tr>
-      );
-    });
-  }
-
-  const tableHead = (
-    <thead>
-      <tr>
-        <th />
-        <th>#</th>
-        <th>Customer / address</th>
-        <th>Items</th>
-        <th>Status</th>
-        <th>Maps</th>
-        <th>Nota / area</th>
-        <th>Fix</th>
-      </tr>
-    </thead>
-  );
+  const deliveryCount = day.summary?.stopCount ?? stops.length;
 
   return (
     <div className="page sheet-page">
       <header className="page-header">
         <div>
-          <p className="hint"><Link to="/deliver">← Deliver</Link></p>
+          <p className="hint"><Link to="/deliver">Deliver</Link></p>
           <h1>{day.date}</h1>
           <p className="hint">
-            {day.summary?.stopCount ?? stops.length} stops · {routes.length} fleets ·{' '}
+            {deliveryCount} {deliveryCount === 1 ? 'delivery' : 'deliveries'}
+            {' · '}
+            {routes.length} {routes.length === 1 ? 'fleet' : 'fleets'}
+            {' · '}
             <StatusBadge status={day.status} />
           </p>
           <p className="hint">
-            Each area starts as one fleet. Tick the stops that do not fit, then move them to another fleet or a new fleet.
-            If a map was already sent, delete it and send that fleet again.
+            Open a delivery to change it. Tick the ones that do not fit, then move them. Send the fleet when the load is right.
           </p>
         </div>
         <div className="row gap wrap">
-          <div className="chips" role="tablist">
-            <button type="button" className={view === 'areas' ? 'chip chip-active' : 'chip'} onClick={() => setView('areas')}>
-              By area
-            </button>
-            <button type="button" className={view === 'all' ? 'chip chip-active' : 'chip'} onClick={() => setView('all')}>
-              Whole sheet
-            </button>
-          </div>
           <button
             type="button"
             className="btn btn-secondary"
@@ -477,18 +383,18 @@ export default function DayDetail() {
           >
             Sync Cartrack
           </button>
-          {view === 'areas' && (
-            <button type="button" className="btn btn-primary" disabled={busy || !routes.length} onClick={startSendAllAreas}>
-              Send all fleets
-            </button>
-          )}
           {sendQueue.length > 0 && (
             <button type="button" className="btn btn-primary" disabled={busy} onClick={sendNextArea}>
               Send next fleet ({sendQueue.length} left)
             </button>
           )}
-          <button type="button" className="btn btn-secondary" disabled={busy} onClick={onDeleteSheet}>
-            Delete sheet
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={busy || !routes.length}
+            onClick={startSendAllAreas}
+          >
+            Send all fleets
           </button>
         </div>
       </header>
@@ -497,201 +403,410 @@ export default function DayDetail() {
       {message && <p className="message message-ok">{message}</p>}
 
       {picked.size > 0 && (
-        <section className="card sheet-move-bar">
-          <strong>{picked.size} selected</strong>
-          <label className="filter-field">
-            <span className="field-label">Move to</span>
-            <select
-              className="sheet-move"
-              value={moveTarget}
-              disabled={busy}
-              onChange={(event) => setMoveTarget(event.target.value)}
+        <section className="card delivery-move">
+          <div>
+            <strong>{picked.size} selected</strong>
+            <p className="hint">Move them onto another fleet when this one is too full.</p>
+          </div>
+          <div className="delivery-actions">
+            <label className="field">
+              <span className="field-label">Move to</span>
+              <select value={moveTarget} disabled={busy} onChange={(event) => setMoveTarget(event.target.value)}>
+                <option value="">Choose a fleet</option>
+                <option value="new">New fleet</option>
+                <option value="unassigned">Not on a fleet</option>
+                {routes.map((route) => (
+                  <option key={route._id} value={route._id}>
+                    {fleetLabel(route, (stopsByRoute.get(String(route._id)) || []).length)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || !moveTarget}
+              onClick={() => run(() => moveChosen([...picked], moveTarget))}
             >
-              <option value="">Choose a fleet</option>
-              <option value="new">New fleet</option>
-              <option value="unassigned">Unassigned</option>
-              {routes.map((route) => (
-                <option key={route._id} value={route._id}>
-                  {fleetLabel(route, (stopsByRoute.get(String(route._id)) || []).length)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={busy || !moveTarget}
-            onClick={() => run(() => moveChosen([...picked], moveTarget))}
-          >
-            Move
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={busy}
-            onClick={() => {
-              if (!window.confirm(`Delete ${picked.size} selected stop${picked.size === 1 ? '' : 's'}? Delivered stops stay.`)) return;
-              run(async () => {
-                const result = await deleteStops(dayId, { stopIds: [...picked] });
-                setPicked(new Set());
-                setMessage(`Deleted ${result.deleted} stop${result.deleted === 1 ? '' : 's'}.`);
-              });
-            }}
-          >
-            Delete stops
-          </button>
-          <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setPicked(new Set())}>
-            Clear
-          </button>
-        </section>
-      )}
-
-      {preview && (
-        <section className="card sheet-preview">
-          <div className="row gap wrap" style={{ justifyContent: 'space-between' }}>
-            <p className="hint" style={{ margin: 0 }}>Last message ({preview.stopCount} stops){preview.needsCheck ? ` · ${preview.needsCheck} need location check` : ''}</p>
-            <button type="button" className="btn btn-secondary btn-compact" onClick={() => navigator.clipboard.writeText(preview.text)}>
-              Copy text
+              Move
+            </button>
+            <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setPicked(new Set())}>
+              Clear
             </button>
           </div>
         </section>
       )}
 
-      {view === 'all' && (
-        <section className="card sheet-board">
-          <div className="sheet-area-head">
-            <h2>Whole sheet</h2>
-            <p className="hint">Tick the stops to move, or use the fleet list on each row. New fleet is for cargo that does not fit.</p>
-          </div>
-          <div className="table-wrap sheet-table">
-            <table>
-              {tableHead}
-              <tbody>{renderStopRows(stops.slice().sort((a, b) => a.sortIndex - b.sortIndex), true)}</tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {view === 'areas' && areaSections.map((section) => (
-        <section key={section.key} className="card sheet-board">
-          <div className="sheet-area-head">
-            <div>
-              <h2>{section.title}</h2>
-              <p className="hint">
-                {section.stops.length} stops
-                {section.subtitle ? ` · ${section.subtitle}` : ''}
-                {cargoLabel(section.route?.loadingTotals) ? ` · ${cargoLabel(section.route?.loadingTotals)}` : ''}
-                {section.route?.mapsStale ? ' · maps out of date' : (section.route?.mapSentAt ? ' · maps sent' : '')}
-              </p>
-            </div>
-            <div className="row gap wrap">
-              {section.stops.length > 0 && (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={busy}
-                  onClick={() => {
-                    const allOn = section.stops.every((stop) => picked.has(stop._id));
-                    selectFleet(section.stops, !allOn);
-                  }}
-                >
-                  {section.stops.length > 0 && section.stops.every((stop) => picked.has(stop._id)) ? 'Clear selection' : 'Select these'}
-                </button>
-              )}
-              {section.route && (
-                <>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={busy}
-                  onClick={() => openCustomise(section.route)}
-                >
-                  Customise
-                </button>
-                <select
-                  key={menuKey}
-                  className="sheet-move"
-                  value=""
-                  disabled={busy}
-                  aria-label={`Delete options for ${section.title}`}
-                  onChange={(event) => {
-                    const choice = event.target.value;
-                    setMenuKey((n) => n + 1);
-                    if (choice) onFleetDelete(section, choice);
-                  }}
-                >
-                  <option value="">Delete…</option>
-                  {(section.route.mapSentAt || section.route.mapsFlag || section.route.mapsStale) && (
-                    <option value="maps">Maps only</option>
-                  )}
-                  <option value="fleet">Fleet, keep the stops</option>
-                  <option value="stops">Fleet and its stops</option>
-                </select>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={busy || section.stops.length === 0}
-                  onClick={() => openAreaSend(section.route._id)}
-                >
-                  {section.route.mapsStale ? 'Send updated map' : 'Send fleet to driver'}
-                </button>
-                </>
-              )}
-            </div>
-          </div>
-          {section.route && customId === String(section.route._id) && (
-            <form
-              className="sheet-custom"
-              onSubmit={(event) => {
-                event.preventDefault();
-                run(() => saveCustomise(section.route._id));
-              }}
-            >
-              <label className="filter-field">
-                <span className="field-label">Fleet name</span>
-                <input value={fleetName} onChange={(event) => setFleetName(event.target.value)} required />
-              </label>
-              <label className="filter-field">
-                <span className="field-label">Vehicle</span>
-                <select value={vehicleId} onChange={(event) => setVehicleId(event.target.value)}>
-                  <option value="">No vehicle</option>
-                  {meta.vehicles.map((vehicle) => (
-                    <option key={vehicle._id} value={vehicle._id}>
-                      {[vehicle.type, vehicle.plate].filter(Boolean).join(' ')}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="filter-field">
-                <span className="field-label">Driver</span>
-                <select value={driverId} onChange={(event) => setDriverId(event.target.value)}>
-                  <option value="">No driver</option>
-                  {meta.drivers.map((driver) => (
-                    <option key={driver._id} value={driver._id}>{driver.name}</option>
-                  ))}
-                </select>
-              </label>
-              <button type="submit" className="btn btn-primary" disabled={busy}>Save fleet</button>
-            </form>
-          )}
-          {section.route?.mapsStale && (
-            <p className="message message-warn sheet-map-warn">
-              Stops moved after this map was sent. Delete the maps, then send this fleet again.
-              The previous WhatsApp message is still on the driver’s phone.
+      {preview && (
+        <section className="card delivery-preview-card">
+          <div className="row gap wrap" style={{ justifyContent: 'space-between' }}>
+            <p className="hint" style={{ margin: 0 }}>
+              Message for the driver
+              {preview.needsCheck ? ` · ${preview.needsCheck} still need a location` : ''}
             </p>
-          )}
-          <div className="table-wrap sheet-table">
-            <table>
-              {tableHead}
-              <tbody>{renderStopRows(section.stops, true)}</tbody>
-            </table>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => navigator.clipboard.writeText(preview.text)}
+            >
+              Copy message
+            </button>
           </div>
+          <pre className="delivery-preview">{preview.text}</pre>
         </section>
-      ))}
-
-      {view === 'areas' && areaSections.length === 0 && (
-        <p className="hint">No stops yet for this day.</p>
       )}
+
+      {areaSections.map((section) => {
+        const editingHere = section.stops.some((stop) => stop._id === editId);
+        const allOn = section.stops.length > 0 && section.stops.every((stop) => picked.has(stop._id));
+        const detail = [
+          `${section.stops.length} ${section.stops.length === 1 ? 'delivery' : 'deliveries'}`,
+          section.route?.vehicleLabel,
+          (section.route?.driverNames || []).filter(Boolean).join(' & '),
+          cargoLabel(section.route?.loadingTotals),
+        ].filter(Boolean).join(' · ');
+        const mapSent = Boolean(section.route?.mapSentAt || section.route?.mapsFlag);
+        return (
+          <section key={section.key} className="card sheet-board">
+            <div className="fleet-head">
+              <div>
+                <h2>{section.title}</h2>
+                <p className="hint">{section.route ? detail : 'Choose a fleet inside each delivery.'}</p>
+                {section.route && !section.route.mapsStale && (
+                  <p className="hint">{mapSent ? 'Map sent. The driver already has that message.' : 'No map sent yet.'}</p>
+                )}
+              </div>
+              <div className="fleet-actions">
+                {section.stops.length > 0 && (
+                  <button
+                    type="button"
+                    className="linkish"
+                    disabled={busy}
+                    onClick={() => selectFleet(section.stops, !allOn)}
+                  >
+                    {allOn ? 'Clear selection' : 'Select all'}
+                  </button>
+                )}
+                {section.route && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={busy}
+                      onClick={() => (customId === String(section.route._id) ? setCustomId('') : openCustomise(section.route))}
+                    >
+                      {customId === String(section.route._id) ? 'Close' : 'Fleet details'}
+                    </button>
+                    {(mapSent || section.route.mapsStale) && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        disabled={busy}
+                        onClick={() => {
+                          if (!window.confirm(`Clear the sent map for ${section.title}? The deliveries stay. Send the fleet again when the load is right.`)) return;
+                          run(() => clearRouteMaps(section.route._id), 'Sent map cleared. Send this fleet again when the load is right.');
+                        }}
+                      >
+                        Clear sent map
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={editingHere ? 'btn btn-secondary' : 'btn btn-primary'}
+                      disabled={busy || section.stops.length === 0}
+                      onClick={() => openAreaSend(section.route._id)}
+                    >
+                      {section.route.mapsStale ? 'Send updated map' : 'Send to driver'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {section.route && customId === String(section.route._id) && (
+              <form
+                className="delivery-edit"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  run(() => saveCustomise(section.route._id), 'Fleet saved.');
+                }}
+              >
+                <div className="delivery-fields">
+                  <label className="field">
+                    <span className="field-label">Fleet name</span>
+                    <input value={fleetName} onChange={(event) => setFleetName(event.target.value)} required />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Vehicle</span>
+                    <select value={vehicleId} onChange={(event) => setVehicleId(event.target.value)}>
+                      <option value="">No vehicle</option>
+                      {meta.vehicles.map((vehicle) => (
+                        <option key={vehicle._id} value={vehicle._id}>
+                          {[vehicle.type, vehicle.plate].filter(Boolean).join(' ')}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Driver</span>
+                    <select value={driverId} onChange={(event) => setDriverId(event.target.value)}>
+                      <option value="">No driver</option>
+                      {meta.drivers.map((driver) => (
+                        <option key={driver._id} value={driver._id}>{driver.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="delivery-actions">
+                  <button type="submit" className="btn btn-primary" disabled={busy}>Save fleet</button>
+                </div>
+              </form>
+            )}
+
+            {section.route?.mapsStale && (
+              <p className="message message-warn sheet-map-warn">
+                This load changed after the map was sent. Clear the sent map, then send it again.
+                The old WhatsApp message is still on the driver’s phone.
+              </p>
+            )}
+
+            <ul className="delivery-list">
+              {section.stops.map((stop, index) => {
+                const open = editId === stop._id && draft;
+                const url = mapsUrl(stop);
+                return (
+                  <li key={stop._id} className={stop.location?.needsPin ? 'delivery-item needs-pin' : 'delivery-item'}>
+                    <div className={open ? 'delivery-row is-open' : 'delivery-row'}>
+                      <label className="delivery-pick">
+                        <input
+                          type="checkbox"
+                          checked={picked.has(stop._id)}
+                          aria-label={`Select ${stop.customerName}`}
+                          onChange={() => togglePicked(stop._id)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="delivery-main"
+                        aria-expanded={open ? 'true' : 'false'}
+                        onClick={() => openDelivery(stop)}
+                      >
+                        <span className="delivery-title">
+                          <strong>{index + 1}. {stop.customerName}</strong>
+                          {stop.isNewCustomer && <span className="badge badge-warn">New</span>}
+                          {stop.location?.needsPin && <span className="badge badge-warn">Check location</span>}
+                          <span className="delivery-edit-cue">{open ? 'Close' : 'Edit'}</span>
+                        </span>
+                        <span className="muted">{stop.location?.address || stop.location?.placeName || 'No address yet'}</span>
+                        <span className="muted">{itemsLabel(stop) || 'No products yet'}</span>
+                      </button>
+                      <StatusBadge status={stop.status} />
+                    </div>
+
+                    {open && (
+                      <form
+                        className="delivery-edit"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          run(() => saveDelivery(stop));
+                        }}
+                      >
+                        <div className="delivery-fields">
+                          <label className="field">
+                            <span className="field-label">Customer</span>
+                            <input
+                              value={draft.customerName}
+                              onChange={(event) => setDraft({ ...draft, customerName: event.target.value })}
+                              required
+                            />
+                          </label>
+                          <label className="field">
+                            <span className="field-label">Fleet</span>
+                            <select
+                              value={draft.routeId}
+                              onChange={(event) => setDraft({ ...draft, routeId: event.target.value })}
+                            >
+                              <option value="new">New fleet</option>
+                              <option value="unassigned">Not on a fleet</option>
+                              {routes.map((route) => (
+                                <option key={route._id} value={route._id}>
+                                  {fleetLabel(route, (stopsByRoute.get(String(route._id)) || []).length)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="field delivery-span">
+                            <span className="field-label">Address</span>
+                            <input
+                              value={draft.address}
+                              onChange={(event) => setDraft({ ...draft, address: event.target.value })}
+                            />
+                          </label>
+                          <label className="field delivery-span">
+                            <span className="field-label">Map link</span>
+                            <input
+                              value={draft.mapsUrl}
+                              placeholder="Paste a Google Maps link"
+                              onChange={(event) => setDraft({ ...draft, mapsUrl: event.target.value })}
+                            />
+                            <span className="hint">Blank keeps the pin already saved for this customer.</span>
+                          </label>
+                          <label className="field delivery-span">
+                            <span className="field-label">Note</span>
+                            <textarea
+                              value={draft.note}
+                              onChange={(event) => setDraft({ ...draft, note: event.target.value })}
+                            />
+                          </label>
+                        </div>
+
+                        <div>
+                          <span className="field-label">Products</span>
+                          {draft.items.map((item, itemIndex) => (
+                            <div key={item.key} className="delivery-line">
+                              <label className="field">
+                                <span className="field-label">Product</span>
+                                <input
+                                  aria-label={`Product ${itemIndex + 1}`}
+                                  value={item.productName}
+                                  onChange={(event) => setItem(item.key, { productName: event.target.value })}
+                                />
+                              </label>
+                              <label className="field">
+                                <span className="field-label">Qty</span>
+                                <input
+                                  aria-label={`Quantity ${itemIndex + 1}`}
+                                  inputMode="numeric"
+                                  value={item.qty}
+                                  onChange={(event) => setItem(item.key, { qty: event.target.value })}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                disabled={busy}
+                                onClick={() => setDraft((current) => {
+                                  const items = current.items.filter((row) => row.key !== item.key);
+                                  return {
+                                    ...current,
+                                    items: items.length ? items : [{ key: 'new', productName: '', packType: '', qty: '' }],
+                                  };
+                                })}
+                              >
+                                Remove product
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={busy}
+                            onClick={() => setDraft((current) => ({
+                              ...current,
+                              items: [...current.items, {
+                                key: `new-${current.items.length}-${Date.now()}`,
+                                productName: '',
+                                packType: '',
+                                qty: '',
+                              }],
+                            }))}
+                          >
+                            Add product
+                          </button>
+                        </div>
+
+                        {stop.location?.needsPin && (
+                          <LocationMap
+                            initial={stop.location?.lat != null ? { lat: stop.location.lat, lng: stop.location.lng } : null}
+                            onPick={(coords) => run(
+                              () => setStopLocation(stop._id, coords),
+                              'Location saved.',
+                            )}
+                          />
+                        )}
+
+                        <div className="delivery-actions">
+                          <button type="submit" className="btn btn-primary" disabled={busy}>Save delivery</button>
+                          {url && (
+                            <a className="btn btn-secondary" href={url} target="_blank" rel="noreferrer">Open map</a>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={busy}
+                            onClick={() => notaRefs.current[stop._id]?.click()}
+                          >
+                            Upload nota
+                          </button>
+                          <input
+                            ref={(el) => { notaRefs.current[stop._id] = el; }}
+                            type="file"
+                            accept="image/*"
+                            hidden
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              event.target.value = '';
+                              if (file) onNota(stop._id, file);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="linkish"
+                            disabled={busy}
+                            onClick={() => run(
+                              () => setStopStatus(stop._id, {
+                                status: stop.status === 'delivered' ? 'otw' : 'delivered',
+                                source: 'admin',
+                              }),
+                              'Status updated.',
+                            )}
+                          >
+                            {stop.status === 'delivered' || stop.status === 'nota_checked' ? 'Undo delivered' : 'Mark delivered'}
+                          </button>
+                          {keptOnSheet(stop) ? (
+                            <span className="hint">A delivered stop stays on the sheet.</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="linkish"
+                              disabled={busy}
+                              onClick={() => {
+                                if (!window.confirm(`Remove ${stop.customerName} from this day? The fleet stays.`)) return;
+                                run(async () => {
+                                  await deleteStops(dayId, { stopIds: [stop._id] });
+                                  setEditId('');
+                                  setDraft(null);
+                                  setPicked((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(stop._id);
+                                    return next;
+                                  });
+                                }, 'That delivery was removed. The fleet is still here.');
+                              }}
+                            >
+                              Remove this delivery
+                            </button>
+                          )}
+                        </div>
+                      </form>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        );
+      })}
+
+      {areaSections.length === 0 && (
+        <p className="hint">No deliveries on this day yet.</p>
+      )}
+
+      <p className="delivery-footer">
+        <button type="button" className="linkish" disabled={busy} onClick={onDeleteSheet}>
+          Delete this day’s sheet
+        </button>
+      </p>
     </div>
   );
 }

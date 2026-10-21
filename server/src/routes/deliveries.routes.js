@@ -12,7 +12,7 @@ import {
   move,
   moveMany,
   removeStops,
-  removeFleet,
+  patchStop,
   clearMaps,
   status,
   routeMessage,
@@ -68,6 +68,7 @@ export function createDeliveriesRouter(env) {
   router.post('/:dayId/cartrack/sync', ops, syncCartrack(env));
   router.get('/:dayId/cartrack/gps-suggestions', ops, gpsSuggestions(env));
 
+  router.patch('/stops/:stopId', ops, patchStop());
   router.patch('/stops/:stopId/location', ops, setLocation());
   router.patch('/stops/:stopId/move', ops, move());
   router.post('/stops/:stopId/status', ops, status());
@@ -79,7 +80,6 @@ export function createDeliveriesRouter(env) {
   router.get('/routes/:routeId/message', ops, routeMessage(env));
   router.post('/routes/:routeId/map-sent', ops, mapSent());
   router.delete('/routes/:routeId/maps', ops, clearMaps());
-  router.delete('/routes/:routeId', ops, removeFleet());
   router.post('/routes/:routeId/reorder', ops, reorder(env));
   // Kept for old clients; always returns 403 (Cartrack read-only).
   router.post('/routes/:routeId/cartrack/send', ops, cartrackKillSwitch, sendCartrack(env));

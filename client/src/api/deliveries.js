@@ -61,8 +61,8 @@ export function deleteStops(dayId, payload) {
   return api(`/deliveries/${dayId}/stops/delete`, { method: 'POST', json: payload });
 }
 
-export function deleteFleet(routeId, payload = {}) {
-  return api(`/deliveries/routes/${routeId}`, { method: 'DELETE', json: payload });
+export function updateStop(stopId, payload) {
+  return api(`/deliveries/stops/${stopId}`, { method: 'PATCH', json: payload });
 }
 
 export function updateRoute(routeId, payload) {

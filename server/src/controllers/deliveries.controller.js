@@ -13,7 +13,7 @@ import {
   moveStop,
   moveStopsToFleet,
   deleteStops,
-  deleteFleet,
+  updateStop,
   clearRouteMaps,
   setStopStatus,
   getRouteMessage,
@@ -135,9 +135,9 @@ export function removeStops() {
   });
 }
 
-export function removeFleet() {
+export function patchStop() {
   return asyncHandler(async (req, res) => {
-    res.json(await deleteFleet(req.params.routeId, req.user, { alsoStops: req.body?.alsoStops === true }));
+    res.json(await updateStop(req.params.stopId, req.user, req.body || {}));
   });
 }
 
