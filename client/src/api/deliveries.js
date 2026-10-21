@@ -142,8 +142,9 @@ export async function downloadDayExport(dayId) {
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
+  const named = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '');
   a.href = url;
-  a.download = `jaan-delivery-${dayId}.xlsx`;
+  a.download = named?.[1] || `jaan-delivery-${dayId}.xlsx`;
   a.click();
   URL.revokeObjectURL(url);
 }

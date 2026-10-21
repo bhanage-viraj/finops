@@ -12,6 +12,7 @@ import {
   uploadNota,
   confirmNota,
   deleteDeliveryDay,
+  downloadDayExport,
   clearRouteMaps,
   deleteStops,
   clearStopMaps,
@@ -416,6 +417,14 @@ export default function DayDetail() {
             }}
           >
             {moving ? 'Done' : 'Move deliveries'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={busy}
+            onClick={() => run(() => downloadDayExport(dayId), 'Excel downloaded. Each area is its own tab.')}
+          >
+            Download Excel
           </button>
           <button
             type="button"
