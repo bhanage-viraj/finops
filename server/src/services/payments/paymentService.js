@@ -10,7 +10,7 @@ import { classifyAmountFit, matchPayment } from '../matching/matcher.js';
 import {
   MAX_ALLOCATIONS, allocateOldestFirst, sortOldestFirst, sumRemaining,
 } from '../matching/allocate.js';
-import { compactName, nameSimilarity } from '../matching/normalizeName.js';
+import { compactName, nameSimilarity, nameTokens, normalizeName } from '../matching/normalizeName.js';
 import { WEAK_NAME } from '../matching/rules.js';
 import { createFileStorage, extensionFor } from '../storage/fileStorage.js';
 import { displayFileName, inspectUpload, prepareStoredBytes } from '../documents/uploads.js';
@@ -68,6 +68,8 @@ function allocationRows(payment) {
       remaining: row.remaining,
       date: row.date || null,
       dueDate: row.dueDate || null,
+      customerId: row.customerId || '',
+      customerName: row.customerName || '',
     }));
   }
   if (payment.zohoInvoiceId && Number.isInteger(payment.matchedInvoice?.remaining)) {
@@ -77,6 +79,8 @@ function allocationRows(payment) {
       remaining: payment.matchedInvoice.remaining,
       date: null,
       dueDate: payment.matchedInvoice.dueDate || null,
+      customerId: payment.zohoCustomerId || '',
+      customerName: payment.matchedInvoice.customerName || '',
     }];
   }
   return [];
@@ -108,6 +112,46 @@ export function splitOver(payment, rows) {
   return { allocations, bankFee, matchType };
 }
 
+/** Extra on a transfer can stay as Zoho credit for one customer only. */
+export const MULTI_CUSTOMER_EXCESS = 'This transfer is more than the ticked invoices. Extra can stay as credit for one villa only — tick more invoices, or clear the other villas.';
+
+/**
+ * One Zoho customer payment per villa. A single customer may keep unused money as credit.
+ * Several villas must add up to the received amount (bank fee already taken off).
+ */
+export function planZohoPayments(parts, { received, fallbackCustomerId = '' } = {}) {
+  if (!Number.isInteger(received) || received <= 0) {
+    return { error: 'Payment amount is missing or invalid.' };
+  }
+  const groups = new Map();
+  for (const row of parts) {
+    const customerId = String(row.customerId || fallbackCustomerId || '').trim();
+    if (!customerId) {
+      return { error: 'A ticked invoice has no Zoho customer. Search again and tick the invoices.' };
+    }
+    if (!groups.has(customerId)) groups.set(customerId, []);
+    groups.get(customerId).push(row);
+  }
+  const applied = parts.reduce((total, row) => total + row.applied, 0);
+  if (applied > received) {
+    return { error: 'Applied amount is larger than the payment. Re-match the invoices.' };
+  }
+  const excess = received - applied;
+  const list = [...groups.entries()].map(([customerId, rows]) => ({
+    customerId,
+    invoices: rows.map((row) => ({ invoiceId: row.invoiceId, amountApplied: row.applied })),
+    applied: rows.reduce((total, row) => total + row.applied, 0),
+  }));
+  if (list.length > 1 && excess > 0) return { error: MULTI_CUSTOMER_EXCESS };
+  return {
+    groups: list.map((group) => ({
+      customerId: group.customerId,
+      invoices: group.invoices,
+      amount: list.length === 1 ? received : group.applied,
+    })),
+  };
+}
+
 function storeAllocations(payment, allocations) {
   payment.allocations = allocations.map((row) => ({
     invoiceId: String(row.invoiceId),
@@ -116,6 +160,8 @@ function storeAllocations(payment, allocations) {
     applied: row.applied ?? 0,
     date: row.date || '',
     dueDate: row.dueDate || '',
+    customerId: String(row.customerId || ''),
+    customerName: row.customerName || '',
   }));
 }
 
@@ -139,6 +185,29 @@ function paymentNotes(payment) {
     'FinOps screenshot proof (stored in FinOps)',
   ].filter(Boolean);
   return parts.join(' · ').slice(0, 200);
+}
+
+function captionDateRange(payment) {
+  const reference = payment.ai?.paidAt || payment.createdAt || new Date();
+  return resolveDateRange(payment.confirmed?.siteNote, reference)
+    || resolveDateRange(payment.ai?.note, reference)
+    || null;
+}
+
+/** Zoho customer ids this payment already covers (numeric ids only). */
+function paymentCustomerIds(payment) {
+  const ids = [
+    payment.zohoCustomerId,
+    ...(payment.allocations || []).map((row) => row.customerId),
+  ];
+  return [...new Set(ids.map((id) => String(id || '').trim()).filter((id) => /^\d+$/.test(id)))];
+}
+
+function paymentReference(base, count, index) {
+  const ref = String(base || '').trim();
+  if (!ref || count < 2) return ref.slice(0, 100);
+  const suffix = `-${index + 1}`;
+  return `${ref.slice(0, Math.max(0, 100 - suffix.length))}${suffix}`;
 }
 
 function serializePayment(doc) {
@@ -173,12 +242,20 @@ function serializePayment(doc) {
       applied: row.applied,
       date: row.date || null,
       dueDate: row.dueDate || null,
+      customerId: row.customerId || '',
+      customerName: row.customerName || '',
     })),
     matchedInvoiceId: payment.zohoInvoiceId || null,
     matchedCustomerId: payment.zohoCustomerId || null,
     zohoInvoiceId: payment.zohoInvoiceId || '',
     zohoCustomerId: payment.zohoCustomerId || '',
     zohoPaymentId: payment.zohoPaymentId || '',
+    zohoPayments: (payment.zohoPayments || []).map((row) => ({
+      customerId: row.customerId,
+      paymentId: row.paymentId,
+      amount: row.amount,
+    })),
+    invoiceDateRange: captionDateRange(payment),
     matchType: payment.matchType,
     matchConfidence: payment.matchConfidence,
     matchReasons: payment.matchReasons || [],
@@ -437,10 +514,11 @@ export async function processPayment(id, env) {
       latest.bankFee = split.bankFee;
       latest.matchType = split.matchType;
       // Still load every unpaid invoice for this customer for the tick list.
-      if (zohoOutcome.status === 'fulfilled' && latest.zohoCustomerId) {
-        const cid = String(latest.zohoCustomerId);
-        await refreshCustomerInvoices(env, cid);
-        const rows = await openInvoicesForCustomer(cid);
+      if (zohoOutcome.status === 'fulfilled' && paymentCustomerIds(latest).length) {
+        const ids = paymentCustomerIds(latest);
+        await refreshCustomerInvoices(env, ids[0]);
+        const lists = await Promise.all(ids.map((cid) => openInvoicesForCustomer(cid)));
+        const rows = lists.flat();
         latest.matchCandidates = sortOldestFirst(
           rows.filter((row) => Number(row.remaining) > 0),
         ).map((row) => ({
@@ -608,15 +686,16 @@ export async function listPayments(user, query = {}) {
 export async function getPayment(id, user, env = null) {
   const payment = await loadPayment(id, user);
   const dto = serializePayment(payment);
-  const customerId = String(payment.zohoCustomerId || '').trim();
+  const customerIds = paymentCustomerIds(payment);
   const closed = ['approved', 'rejected'].includes(payment.status);
-  if (!env || !customerId || closed) return dto;
+  if (!env || !customerIds.length || closed) return dto;
 
   try {
     await ensureInvoiceStore(env);
-    dto.customerOpenInvoices = (await openInvoicesForCustomer(customerId)).map(mapOpenInvoiceRow);
+    const lists = await Promise.all(customerIds.map((cid) => openInvoicesForCustomer(cid)));
+    dto.customerOpenInvoices = lists.flat().map(mapOpenInvoiceRow);
     // Refresh in the background so opening a payment is not blocked on Zoho.
-    refreshCustomerInvoices(env, customerId).catch(() => {});
+    refreshCustomerInvoices(env, customerIds[0]).catch(() => {});
   } catch (error) {
     // Fall back to matcher candidates; the UI still prefers those over amount-only allocations.
     dto.customerOpenInvoices = null;
@@ -640,7 +719,7 @@ export async function setPaymentMatch(id, user, body = {}, env) {
   if (payment.status === 'approved') throw httpError(400, 'This payment is already approved.');
   if (payment.status === 'rejected') throw httpError(400, 'This payment was rejected.');
 
-  // One invoice ({ invoiceId }) or several of the same customer ({ invoiceIds }).
+  // One invoice ({ invoiceId }) or several, including villas that are different Zoho customers.
   const requested = Array.isArray(body.invoiceIds) ? body.invoiceIds : [body.invoiceId];
   const invoiceIds = [...new Set(requested.map((value) => String(value ?? '').trim()))];
   if (!invoiceIds.length || invoiceIds.some((value) => !/^\d+$/.test(value))) {
@@ -653,8 +732,9 @@ export async function setPaymentMatch(id, user, body = {}, env) {
   const invoices = await loadZohoInvoices(env);
   const picked = invoiceIds.map((value) => invoices.find((row) => String(row.invoiceId) === value));
   if (picked.some((row) => !row)) throw httpError(404, 'An unpaid Zoho invoice was not found. Reload and try again.');
-  if (new Set(picked.map((row) => row.customerId)).size > 1) {
-    throw httpError(400, 'All invoices in one payment must belong to the same customer.');
+  const customerIds = new Set(picked.map((row) => String(row.customerId || '')));
+  if ([...customerIds].some((cid) => !cid)) {
+    throw httpError(400, 'A chosen invoice has no Zoho customer. Reload and try again.');
   }
 
   const before = {
@@ -670,31 +750,39 @@ export async function setPaymentMatch(id, user, body = {}, env) {
     remaining: row.remaining,
     date: row.date || null,
     dueDate: row.dueDate || null,
+    customerId: row.customerId,
+    customerName: row.customerName || '',
   })));
+  if (customerIds.size > 1 && split.matchType === 'over') {
+    throw httpError(400, MULTI_CUSTOMER_EXCESS);
+  }
   const matchType = split.matchType;
   payment.bankFee = split.bankFee;
   storeAllocations(payment, split.allocations);
   const invoice = picked.find((row) => String(row.invoiceId) === split.allocations[0].invoiceId) || picked[0];
+  const villaNames = [...new Set(picked.map((row) => row.customerName).filter(Boolean))];
+  const typedName = splitCaption(String(body.customerName || '')).name;
 
   payment.zohoInvoiceId = invoice.invoiceId;
   payment.zohoCustomerId = invoice.customerId;
   payment.matchedInvoice = {
     invoiceNumber: invoice.invoiceNo || invoice.invoiceNumber,
-    customerName: invoice.customerName,
+    customerName: villaNames.length > 1 ? (typedName || invoice.customerName) : invoice.customerName,
     remaining: invoice.remaining,
     dueDate: invoice.dueDate || '',
     status: invoice.status || '',
   };
   payment.matchType = matchType;
   payment.matchConfidence = 'high';
-  payment.matchReasons = [picked.length > 1
-    ? `${picked.length} invoices chosen by an accountant.`
-    : 'Matched manually by an accountant.'];
+  payment.matchReasons = [villaNames.length > 1
+    ? `${picked.length} invoices across ${villaNames.length} villas chosen by an accountant.`
+    : (picked.length > 1
+      ? `${picked.length} invoices chosen by an accountant.`
+      : 'Matched manually by an accountant.')];
   payment.flags = (payment.flags || []).filter((f) => f !== 'unidentified');
-  // Keep every unpaid invoice for this customer on the payment so the tick list
-  // shows the full outstanding set — amount matching only pre-ticks a subset.
+  // Keep every unpaid invoice for the chosen villas so the tick list is not only the amount fit.
   payment.matchCandidates = sortOldestFirst(
-    invoices.filter((row) => String(row.customerId) === String(invoice.customerId) && Number(row.remaining) > 0),
+    invoices.filter((row) => customerIds.has(String(row.customerId)) && Number(row.remaining) > 0),
   ).map((row) => ({
     invoiceId: row.invoiceId,
     invoiceNo: row.invoiceNo || row.invoiceNumber,
@@ -714,7 +802,8 @@ export async function setPaymentMatch(id, user, body = {}, env) {
     payment.status = payment.statementVerified ? 'verified' : 'matched';
   }
   if (!payment.confirmed) payment.confirmed = {};
-  payment.confirmed.customerName = invoice.customerName || payment.confirmed.customerName;
+  if (villaNames.length > 1 && typedName) payment.confirmed.customerName = typedName;
+  else if (villaNames.length === 1) payment.confirmed.customerName = villaNames[0];
   await payment.save();
 
   await writeAudit({
@@ -838,12 +927,13 @@ export async function approvePayment(id, user, body = {}, env) {
   }
   const parts = split.allocations.filter((row) => row.applied > 0);
   if (!parts.length) throw httpError(400, 'No invoice receives any of this payment.');
+  const plan = planZohoPayments(parts, { received: amount, fallbackCustomerId: payment.zohoCustomerId });
+  if (plan.error) throw httpError(400, plan.error);
   const applied = parts.reduce((total, row) => total + row.applied, 0);
-  if (applied > amount) throw httpError(400, 'Applied amount is larger than the payment. Re-match the invoices.');
   const excess = amount - applied;
   const reason = String(body.overpaymentReason || payment.overpaymentReason || '').trim();
   if (excess > 0) {
-    // Zoho keeps unused amount as excess; reason is optional audit text.
+    // Zoho keeps unused amount as excess on the single customer; reason is optional audit text.
     payment.overpaymentReason = reason || `Excess Rp ${excess} unused on invoice`;
   }
 
@@ -851,38 +941,60 @@ export async function approvePayment(id, user, body = {}, env) {
   const notes = [
     paymentNotes(payment),
     parts.length > 1 ? `${parts.length} invoices` : '',
+    plan.groups.length > 1 ? `${plan.groups.length} villas` : '',
     payment.bankFee > 0 ? `Bank fee Rp ${payment.bankFee} not recorded` : '',
     excess > 0 ? `Excess Rp ${excess}${reason ? ` · ${reason}` : ''}` : '',
   ].filter(Boolean).join(' · ').slice(0, 200);
 
   const { refreshToken } = await requireZohoReady(env);
-  let zohoResult;
-  try {
-    zohoResult = await createCustomerPayment({
-      zoho: env.zoho,
-      refreshToken,
-      payment: {
-        customerId: payment.zohoCustomerId,
-        invoices: parts.map((row) => ({ invoiceId: row.invoiceId, amountApplied: row.applied })),
-        amount,
-        date: dateIso,
-        paymentMode: env.zoho.paymentMode || 'Bank Transfer',
-        accountId: env.zoho.paymentDepositAccountId,
-        referenceNumber: payment.ai?.reference || '',
-        description: notes,
-      },
+  if (!Array.isArray(payment.zohoPayments)) payment.zohoPayments = [];
+  const recorded = new Set(payment.zohoPayments.map((row) => String(row.customerId)));
+  for (let index = 0; index < plan.groups.length; index += 1) {
+    const group = plan.groups[index];
+    if (recorded.has(group.customerId)) continue;
+    let zohoResult;
+    try {
+      zohoResult = await createCustomerPayment({
+        zoho: env.zoho,
+        refreshToken,
+        payment: {
+          customerId: group.customerId,
+          invoices: group.invoices,
+          amount: group.amount,
+          date: dateIso,
+          paymentMode: env.zoho.paymentMode || 'Bank Transfer',
+          accountId: env.zoho.paymentDepositAccountId,
+          referenceNumber: paymentReference(payment.ai?.reference, plan.groups.length, index),
+          description: notes,
+        },
+      });
+    } catch (error) {
+      await payment.save();
+      const done = payment.zohoPayments.length;
+      const detail = error.message || 'Zoho did not accept the payment.';
+      throw httpError(error.status || 422, done
+        ? `Recorded ${done} villa payment${done === 1 ? '' : 's'}. Zoho rejected the next one: ${detail} Record again to finish the rest.`
+        : detail);
+    }
+    payment.zohoPayments.push({
+      customerId: group.customerId,
+      paymentId: zohoResult.paymentId,
+      amount: group.amount,
     });
-  } catch (error) {
-    throw httpError(error.status || 422, error.message || 'Zoho did not accept the payment.');
+    if (!payment.zohoPaymentId) payment.zohoPaymentId = zohoResult.paymentId;
+    await payment.save();
   }
 
-  payment.zohoPaymentId = zohoResult.paymentId;
   payment.status = 'approved';
   payment.approvedBy = user.id;
   payment.approvedAt = new Date();
   await payment.save();
-  // The recorded payment changes these balances in Zoho; read the customer again now.
-  await refreshCustomerInvoices(env, payment.zohoCustomerId, { force: true });
+  // The recorded payments change these balances in Zoho; read each villa again now.
+  for (const group of plan.groups) {
+    await refreshCustomerInvoices(env, group.customerId, { force: true }).catch((error) => {
+      console.error('Could not refresh customer after payment', group.customerId, error.message);
+    });
+  }
 
   await writeAudit({
     userId: user.id,
@@ -893,7 +1005,8 @@ export async function approvePayment(id, user, body = {}, env) {
       status: 'approved',
       zohoInvoiceId: payment.zohoInvoiceId,
       zohoPaymentId: payment.zohoPaymentId,
-      invoices: parts.map((row) => ({ invoiceId: row.invoiceId, applied: row.applied })),
+      zohoPaymentIds: payment.zohoPayments.map((row) => row.paymentId),
+      invoices: parts.map((row) => ({ invoiceId: row.invoiceId, applied: row.applied, customerId: row.customerId || '' })),
       applied,
       amount,
       bankFee: payment.bankFee || 0,
@@ -944,6 +1057,28 @@ export function customerSearchRank(query, customerName) {
   return score >= WEAK_NAME ? 3 - score : null;
 }
 
+/**
+ * Group name such as "AN Balinest" matches every villa that contains the distinctive words
+ * ("Balinest Villa Kristi"), so the accountant does not search each villa.
+ * Short words (AN, PT) are ignored. 0 = name starts with the word, 1 = it appears later.
+ */
+export function groupNameRank(query, customerName) {
+  const tokens = nameTokens(query).filter((token) => token.length > 2);
+  if (!tokens.length) return null;
+  const spaced = normalizeName(customerName);
+  const compact = compactName(customerName);
+  if (!spaced || !compact) return null;
+  const hit = tokens.every((token) => spaced.includes(token) || compact.includes(token));
+  if (!hit) return null;
+  return spaced.startsWith(tokens[0]) || compact.startsWith(tokens[0]) ? 0 : 1;
+}
+
+function bestNameRank(query, customerName) {
+  const ranks = [customerSearchRank(query, customerName), groupNameRank(query, customerName)]
+    .filter((rank) => rank != null);
+  return ranks.length ? Math.min(...ranks) : null;
+}
+
 /** INV-079837, INV 79837, or several numbers pasted together. */
 export function parseInvoiceNumbers(text) {
   const found = [];
@@ -982,36 +1117,61 @@ function mapOpenInvoiceRow(invoice) {
   };
 }
 
+const OPEN_INVOICE_SEARCH_LIMIT = 200;
+
+function isoDay(value, label) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw httpError(400, `${label} must be a YYYY-MM-DD date.`);
+  return text;
+}
+
+/** Invoice date inside the filter. Undated rows stay, so a missing date does not hide money. */
+function inInvoiceDateRange(row, fromDate, toDate) {
+  if (!fromDate && !toDate) return true;
+  const day = String(row.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return true;
+  if (fromDate && day < fromDate) return false;
+  if (toDate && day > toDate) return false;
+  return true;
+}
+
+function byInvoiceDay(a, b) {
+  const byDay = String(a.date || a.dueDate || '').localeCompare(String(b.date || b.dueDate || ''));
+  return byDay || String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
+}
+
 /**
  * Pick which open-invoice rows the Payments UI should show.
  * customerId → every unpaid invoice for that customer (not filtered by transfer amount).
- * search → name / invoice# matches. Neither → first 100.
+ * search → name / invoice# matches, including a group name across villas.
+ * fromDate/toDate limit invoice dates the way Receivable Summary does.
+ * Neither search nor customer → first 100.
+ * Returns every match; listOpenInvoices applies the display cap.
  */
-export function selectOpenInvoices(mapped, search = '', { customerId = '' } = {}) {
+export function selectOpenInvoices(mapped, search = '', { customerId = '', fromDate = '', toDate = '' } = {}) {
+  const dated = mapped.filter((row) => inInvoiceDateRange(row, fromDate, toDate));
   const cid = String(customerId || '').trim();
   if (cid) {
-    return mapped
+    return dated
       .filter((row) => String(row.erpCustomerId) === cid && Number(row.remaining) > 0)
-      .sort((a, b) => {
-        const byDay = String(a.date || a.dueDate || '').localeCompare(String(b.date || b.dueDate || ''));
-        return byDay || String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
-      });
+      .sort(byInvoiceDay);
   }
 
   const q = String(search || '').trim();
-  if (!q) return mapped.slice(0, 100);
+  if (!q) return dated.slice(0, 100);
 
   const numbers = parseInvoiceNumbers(q);
   if (numbers.length > 1) {
     const want = new Set(numbers.map((no) => invoiceNoKey(no)));
-    return mapped.filter((row) => want.has(invoiceNoKey(row.invoiceNo)));
+    return dated.filter((row) => want.has(invoiceNoKey(row.invoiceNo)));
   }
 
   const nameRanks = new Map();
   const scored = [];
-  for (const row of mapped) {
+  for (const row of dated) {
     if (!nameRanks.has(row.customerName)) {
-      nameRanks.set(row.customerName, customerSearchRank(q, row.customerName));
+      nameRanks.set(row.customerName, bestNameRank(q, row.customerName));
     }
     const invRank = invoiceSearchRank(numbers[0] || q, row.invoiceNo);
     const nameRank = nameRanks.get(row.customerName);
@@ -1025,9 +1185,9 @@ export function selectOpenInvoices(mapped, search = '', { customerId = '' } = {}
     if (a.rank !== b.rank) return a.rank - b.rank;
     const byName = String(a.row.customerName || '').localeCompare(String(b.row.customerName || ''));
     if (byName) return byName;
-    return String(a.row.date || a.row.dueDate || '').localeCompare(String(b.row.date || b.row.dueDate || ''));
+    return byInvoiceDay(a.row, b.row);
   });
-  return scored.slice(0, 80).map((entry) => entry.row);
+  return scored.map((entry) => entry.row);
 }
 
 /**
@@ -1035,7 +1195,10 @@ export function selectOpenInvoices(mapped, search = '', { customerId = '' } = {}
  * With customerId: every unpaid invoice for that customer (oldest first) — not amount-filtered.
  * With a keyword: name / invoice# matches, best name first, oldest invoice first.
  */
-export async function listOpenInvoices(env, search = '', { customerId = '' } = {}) {
+export async function listOpenInvoices(env, search = '', { customerId = '', fromDate = '', toDate = '' } = {}) {
+  const from = isoDay(fromDate, 'From');
+  const to = isoDay(toDate, 'To');
+  if (from && to && from > to) throw httpError(400, 'The start date must be on or before the end date.');
   const cid = String(customerId || '').trim();
   if (cid) {
     await requireZohoReady(env);
@@ -1047,10 +1210,17 @@ export async function listOpenInvoices(env, search = '', { customerId = '' } = {
     } else {
       refreshCustomerInvoices(env, cid).catch(() => {});
     }
-    return selectOpenInvoices(invoices.map(mapOpenInvoiceRow), '', { customerId: cid });
+    const rows = selectOpenInvoices(invoices.map(mapOpenInvoiceRow), '', { customerId: cid, fromDate: from, toDate: to });
+    return { invoices: rows, truncated: false };
   }
   const invoices = await loadZohoInvoices(env);
-  return selectOpenInvoices(invoices.map(mapOpenInvoiceRow), search, {});
+  const rows = selectOpenInvoices(invoices.map(mapOpenInvoiceRow), search, { fromDate: from, toDate: to });
+  const q = String(search || '').trim();
+  if (!q || parseInvoiceNumbers(q).length > 1) return { invoices: rows, truncated: false };
+  return {
+    invoices: rows.slice(0, OPEN_INVOICE_SEARCH_LIMIT),
+    truncated: rows.length > OPEN_INVOICE_SEARCH_LIMIT,
+  };
 }
 
 export function fileKeyFor(payment) {
@@ -1062,7 +1232,7 @@ export async function deletePayment(id, user, env) {
   if (payment.status === 'processing' || payment.status === 'uploaded') {
     throw httpError(400, 'This screenshot is still being read. Wait a moment, then try again.');
   }
-  if (payment.zohoPaymentId) {
+  if (payment.zohoPaymentId || (payment.zohoPayments || []).some((row) => row.paymentId)) {
     throw httpError(400, 'This payment was already recorded in Zoho. Reverse it there first.');
   }
   const key = payment.imageKey;

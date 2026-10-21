@@ -81,6 +81,8 @@ function publicAllocation(row) {
     applied: row.applied,
     date: row.date || null,
     dueDate: row.dueDate || null,
+    customerId: row.customerId || '',
+    customerName: row.customerName || '',
   };
 }
 

@@ -7,7 +7,6 @@ import {
   fetchPayment,
   fetchPaymentFile,
   matchPayment,
-  updatePaymentHints,
   verifyPayment,
 } from '../../api/payments.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
@@ -47,14 +46,42 @@ function oldestFirst(a, b) {
   return byDay || String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
 }
 
-function parseInvoiceNumbers(text) {
-  const found = [];
-  for (const match of String(text || '').matchAll(/\bINV[-\s]?(\d{3,})\b/gi)) {
-    const no = `INV-${match[1]}`;
-    if (!found.includes(no)) found.push(no);
-  }
-  return found;
+function monthBounds(date = new Date()) {
+  const start = new Date(date.getFullYear(), date.getMonth(), 1);
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  const iso = (day) => {
+    const month = String(day.getMonth() + 1).padStart(2, '0');
+    const datePart = String(day.getDate()).padStart(2, '0');
+    return `${day.getFullYear()}-${month}-${datePart}`;
+  };
+  return { from: iso(start), to: iso(end) };
 }
+
+/** null means all dates. Custom is ignored until both ends are in order. */
+function selectedRange(mode, from, to) {
+  if (mode === 'month') return monthBounds();
+  if (mode === 'custom' && from && to && from <= to) return { from, to };
+  return null;
+}
+
+function invoiceDay(row) {
+  const day = String(row.date || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';
+}
+
+function inSelectedRange(row, range) {
+  if (!range) return true;
+  const day = invoiceDay(row);
+  if (!day) return true;
+  return day >= range.from && day <= range.to;
+}
+
+function villaKey(row) {
+  return String(row.erpCustomerId || row.customerId || row.customerName || '');
+}
+
+const MAX_TICKS = 40;
+const MULTI_VILLA_EXCESS = 'This transfer is more than the ticked invoices. Extra can stay as credit for one villa only — tick more invoices, or clear the other villas.';
 
 /** Merge open-invoice lists by id. First source wins for each invoice. */
 function mergeOpenInvoiceRows(...lists) {
@@ -118,11 +145,15 @@ export default function PaymentDetail() {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [suggesting, setSuggesting] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchTruncated, setSearchTruncated] = useState(false);
+  const [dateMode, setDateMode] = useState('all');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const suggestSeq = useRef(0);
+  const dateTouched = useRef(false);
   const startedAt = useRef(Date.now());
   const [elapsed, setElapsed] = useState(0);
   const [customerInvoices, setCustomerInvoices] = useState([]);
@@ -150,6 +181,13 @@ export default function PaymentDetail() {
       || '';
     if (name) setQuery((prev) => prev || name);
   }
+
+  useEffect(() => {
+    dateTouched.current = false;
+    setDateMode('all');
+    setFrom('');
+    setTo('');
+  }, [id]);
 
   useEffect(() => {
     startedAt.current = Date.now();
@@ -191,35 +229,47 @@ export default function PaymentDetail() {
     return () => clearInterval(timer);
   }, [payment?.status]);
 
+  const rangeFrom = payment?.invoiceDateRange?.from || '';
+  const rangeTo = payment?.invoiceDateRange?.to || '';
+  useEffect(() => {
+    if (dateTouched.current || !payment || String(payment.id) !== String(id)) return;
+    if (!rangeFrom || !rangeTo) return;
+    setDateMode('custom');
+    setFrom(rangeFrom);
+    setTo(rangeTo);
+  }, [id, payment, rangeFrom, rangeTo]);
+
   useEffect(() => {
     if (!canReview || payment?.status === 'approved') return undefined;
     const q = query.trim();
     if (q.length < 2) {
       setSuggestions([]);
       setSuggesting(false);
+      setSearchTruncated(false);
       return undefined;
     }
+    if (dateMode === 'custom' && from && to && from > to) return undefined;
+    const range = selectedRange(dateMode, from, to);
     const seq = ++suggestSeq.current;
     setSuggesting(true);
     const timer = setTimeout(() => {
-      fetchOpenInvoices(q)
+      fetchOpenInvoices(q, '', range || {})
         .then((body) => {
           if (seq !== suggestSeq.current) return;
           setSuggestions(body.invoices || []);
-          if (!payment?.matchedInvoiceId && (body.invoices || []).length > 0) {
-            setShowSuggestions(true);
-          }
+          setSearchTruncated(Boolean(body.truncated));
         })
         .catch(() => {
           if (seq !== suggestSeq.current) return;
           setSuggestions([]);
+          setSearchTruncated(false);
         })
         .finally(() => {
           if (seq === suggestSeq.current) setSuggesting(false);
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [query, canReview, payment?.status, payment?.matchedInvoiceId]);
+  }, [query, canReview, payment?.status, dateMode, from, to]);
 
   const matchedCustomerId = payment?.matchedCustomerId || '';
   const allocationKey = (payment?.allocations || []).map((row) => row.invoiceId).join(',');
@@ -298,9 +348,14 @@ export default function PaymentDetail() {
 
   async function applyTicked() {
     if (!ticked.size) return;
+    if (ticked.size > MAX_TICKS) {
+      setError(`One transfer can record ${MAX_TICKS} invoices. Shorten the dates or untick some.`);
+      return;
+    }
+    const count = ticked.size;
     await run(async () => {
-      await matchPayment(id, { invoiceIds: [...ticked] });
-      setMessage(ticked.size > 1 ? `${ticked.size} invoices linked to this transfer.` : 'Invoice changed.');
+      await matchPayment(id, { invoiceIds: [...ticked], customerName: query.trim() });
+      setMessage(count > 1 ? `${count} invoices linked to this transfer.` : 'Invoice changed.');
     });
   }
 
@@ -316,28 +371,6 @@ export default function PaymentDetail() {
     } finally {
       setBusy(false);
     }
-  }
-
-  async function pickSuggestion(row) {
-    const numbers = parseInvoiceNumbers(query);
-    const sameCustomer = suggestions.filter((item) => (
-      String(item.erpCustomerId || item.customerId || '') === String(row.erpCustomerId || row.customerId || '')
-    ));
-    const wanted = numbers.length > 1
-      ? sameCustomer.filter((item) => numbers.includes(String(item.invoiceNo || '').toUpperCase()))
-      : [row];
-    const picked = wanted.length ? wanted : [row];
-    const ids = [...new Set(picked.map((item) => String(item.id || item.invoiceId)))];
-    setQuery(row.customerName || query);
-    setShowSuggestions(false);
-    setSuggestions([]);
-    await run(async () => {
-      await updatePaymentHints(id, { customerName: row.customerName || '' });
-      await matchPayment(id, ids.length > 1 ? { invoiceIds: ids } : { invoiceId: ids[0] });
-      setMessage(ids.length > 1
-        ? `${ids.length} invoices linked from the numbers you typed.`
-        : 'Invoice matched.');
-    });
   }
 
   async function onDelete() {
@@ -371,15 +404,15 @@ export default function PaymentDetail() {
     && !reading
     && !['approved', 'rejected', 'failed'].includes(payment.status)
     && Boolean(payment.matchedInvoiceId);
-  const canDelete = !reading && !payment.zohoPaymentId;
+  const canDelete = !reading && !payment.zohoPaymentId && !(payment.zohoPayments || []).length;
   const amount = payment.amountReceived ?? payment.ai?.amount;
   const hasAmount = amount != null;
   const adminFee = payment.ai?.adminFee || payment.bankFee || 0;
   const allocations = payment.allocations || [];
   const appliedById = new Map(allocations.map((row) => [String(row.invoiceId), row.applied]));
-  // Always show every unpaid invoice we know about for this customer.
-  // AI may pre-tick the amount fit — that must not hide the rest of the list.
-  const pickRows = mergeOpenInvoiceRows(
+  // Customer invoices stay listed until a group search replaces them.
+  // A name like AN Balinest returns every villa; ticks stay visible if the date filter hides them.
+  const savedRows = mergeOpenInvoiceRows(
     payment.customerOpenInvoices,
     customerInvoices,
     (payment.candidates || []).map((row) => ({
@@ -395,12 +428,46 @@ export default function PaymentDetail() {
       invoiceNo: row.invoiceNo,
       date: row.date,
       remaining: row.remaining,
+      customerId: row.customerId,
+      customerName: row.customerName,
     })),
   );
-  const tickedTotal = pickRows
-    .filter((row) => ticked.has(String(row.id)))
-    .reduce((total, row) => total + row.remaining, 0);
+  const searching = query.trim().length >= 2;
+  const suggestionCustomers = new Set(suggestions.map((row) => villaKey(row)).filter(Boolean));
+  // Group search lists every matching villa. Invoices already loaded for those villas stay,
+  // so a date filter does not drop the matched customer's rows that the search capped out.
+  const pickRows = searching && suggestions.length
+    ? mergeOpenInvoiceRows(
+      suggestions,
+      savedRows.filter((row) => suggestionCustomers.has(villaKey(row)) || ticked.has(String(row.id))),
+    )
+    : savedRows;
+  const range = canFindCustomer ? selectedRange(dateMode, from, to) : null;
+  const rangeError = dateMode === 'custom' && from && to && from > to
+    ? 'The start date must be on or before the end date.'
+    : '';
+  const inRangeRows = rangeError ? [] : pickRows.filter((row) => inSelectedRange(row, range));
+  const visibleRows = mergeOpenInvoiceRows(
+    inRangeRows,
+    pickRows.filter((row) => ticked.has(String(row.id)) && !inSelectedRange(row, range)),
+  );
+  const villaGroups = [];
+  const villaIndex = new Map();
+  for (const row of visibleRows) {
+    const key = villaKey(row) || row.customerName || 'Customer';
+    if (!villaIndex.has(key)) {
+      const group = { key, name: row.customerName || 'Customer', rows: [] };
+      villaIndex.set(key, group);
+      villaGroups.push(group);
+    }
+    villaIndex.get(key).rows.push(row);
+  }
+  const inRangeVillas = new Set(inRangeRows.map((row) => villaKey(row)).filter(Boolean)).size;
+  const tickedRows = pickRows.filter((row) => ticked.has(String(row.id)));
+  const tickedVillas = new Set(tickedRows.map((row) => villaKey(row)).filter(Boolean)).size;
+  const tickedTotal = tickedRows.reduce((total, row) => total + row.remaining, 0);
   const pickGap = hasAmount ? amount - tickedTotal : 0;
+  const multiVillaExcess = tickedVillas > 1 && pickGap > MAX_BANK_FEE;
   let pickSumClass = 'message-warn';
   let pickSumText = 'Tick the invoices this transfer pays.';
   if (hasAmount && ticked.size) {
@@ -410,6 +477,8 @@ export default function PaymentDetail() {
     } else if (pickGap > 0 && pickGap <= MAX_BANK_FEE) {
       pickSumClass = 'message-ok';
       pickSumText = `Match · ${formatRupiah(pickGap)} bank fee not recorded.`;
+    } else if (pickGap > 0 && tickedVillas > 1) {
+      pickSumText = MULTI_VILLA_EXCESS;
     } else if (pickGap > 0) {
       pickSumText = `${formatRupiah(pickGap)} extra stays as customer credit.`;
     } else {
@@ -547,7 +616,13 @@ export default function PaymentDetail() {
         <section className="card">
           {invoice && (
             <dl className="field-list">
-              <div><dt>Customer</dt><dd>{invoice.customer?.name || '—'}</dd></div>
+              <div>
+                <dt>Customer</dt>
+                <dd>
+                  {invoice.customer?.name || '—'}
+                  {inRangeVillas > 1 ? ` · ${inRangeVillas} villas in this list` : ''}
+                </dd>
+              </div>
               <div><dt>Zoho mode</dt><dd>Bank Transfer</dd></div>
             </dl>
           )}
@@ -563,7 +638,10 @@ export default function PaymentDetail() {
                   <li key={String(row.invoiceId)} className="pay-pick-row is-static">
                     <span className="pay-pick-main">
                       <strong>{row.invoiceNo || '—'}</strong>
-                      <span className="hint">{row.date ? formatDay(row.date) : ''}</span>
+                      <span className="hint">
+                        {row.customerName ? `${row.customerName} · ` : ''}
+                        {row.date ? formatDay(row.date) : ''}
+                      </span>
                     </span>
                     <span className="pay-pick-amount">
                       <strong>{formatRupiah(row.applied)}</strong>
@@ -582,19 +660,80 @@ export default function PaymentDetail() {
             </div>
           )}
 
-          {invoice && !closed && pickRows.length > 0 && (
+          {canFindCustomer && !closed && (
+            <>
+              <div className="filters payment-date-filters">
+                <label className="filter-field">
+                  <span className="field-label">Date range</span>
+                  <select
+                    value={dateMode}
+                    onChange={(event) => {
+                      dateTouched.current = true;
+                      setDateMode(event.target.value);
+                    }}
+                  >
+                    <option value="all">All dates</option>
+                    <option value="month">This month</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                {dateMode === 'custom' && (
+                  <>
+                    <label className="filter-field">
+                      <span className="field-label">From</span>
+                      <input
+                        type="date"
+                        value={from}
+                        onChange={(event) => {
+                          dateTouched.current = true;
+                          setFrom(event.target.value);
+                        }}
+                      />
+                    </label>
+                    <label className="filter-field">
+                      <span className="field-label">To</span>
+                      <input
+                        type="date"
+                        value={to}
+                        onChange={(event) => {
+                          dateTouched.current = true;
+                          setTo(event.target.value);
+                        }}
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+              {rangeError && <p className="message message-bad">{rangeError}</p>}
+              <label className="field">
+                <span className="field-label">Customer or invoice numbers</span>
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="AN Balinest, or INV-079837"
+                  autoComplete="off"
+                />
+              </label>
+              <p className="hint">
+                Type a group name such as AN Balinest. Every villa whose name contains it is listed.
+                Set the dates, Select all, then use those invoices. You do not search each villa.
+              </p>
+            </>
+          )}
+
+          {!closed && (visibleRows.length > 0 || canFindCustomer) && (
             <div className="payment-invoice-pick">
               <div className="title-row">
                 <p className="field-label">Unpaid invoices — tick the ones this transfer pays</p>
-                {canFindCustomer && pickRows.length > 1 && (
+                {canFindCustomer && inRangeRows.length > 0 && (
                   <div className="actions payment-tick-tools">
                     <button
                       type="button"
                       className="btn btn-secondary"
-                      disabled={busy}
-                      onClick={() => setTicked(new Set(pickRows.map((row) => String(row.id))))}
+                      disabled={busy || Boolean(rangeError)}
+                      onClick={() => setTicked(new Set(inRangeRows.map((row) => String(row.id))))}
                     >
-                      Select all
+                      {range ? 'Select all in range' : 'Select all'}
                     </button>
                     <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setTicked(new Set())}>
                       Clear
@@ -602,48 +741,81 @@ export default function PaymentDetail() {
                   </div>
                 )}
               </div>
-              {loadingInvoices && <p className="hint">Loading this customer&apos;s unpaid invoices…</p>}
-              {payment.customerOpenInvoicesError && !customerInvoices.length && (
+              {loadingInvoices && !searching && <p className="hint">Loading unpaid invoices…</p>}
+              {suggesting && <p className="hint">Searching…</p>}
+              {searching && !suggesting && suggestions.length === 0 && (
+                <p className="message message-warn">
+                  No unpaid invoice matches that name. Showing the invoices already on this payment.
+                </p>
+              )}
+              {payment.customerOpenInvoicesError && !customerInvoices.length && !searching && (
                 <p className="message message-warn">{payment.customerOpenInvoicesError}</p>
               )}
+              {searchTruncated && (
+                <p className="message message-warn">Too many invoices match. Narrow the date range.</p>
+              )}
+              {inRangeRows.length > MAX_TICKS && (
+                <p className="message message-warn">
+                  This range has {inRangeRows.length} invoices. One transfer can record {MAX_TICKS}. Shorten the dates.
+                </p>
+              )}
               <p className="hint">
-                Showing all {pickRows.length} unpaid invoice{pickRows.length === 1 ? '' : 's'}
-                {ticked.size ? ` · AI ticked ${ticked.size} for this amount — change ticks if wrong` : ''}
+                {inRangeRows.length === 0 && !suggesting
+                  ? 'No unpaid invoices in this date range.'
+                  : `Showing ${inRangeRows.length} unpaid invoice${inRangeRows.length === 1 ? '' : 's'}${inRangeVillas > 1 ? ` across ${inRangeVillas} villas` : ''}`}
+                {ticked.size ? ` · ${ticked.size} ticked` : ''}
               </p>
-              <ul className="pay-pick-list">
-                {pickRows.map((row) => {
-                  const key = String(row.id);
-                  const isTicked = ticked.has(key);
-                  const applied = tickChanged ? null : appliedById.get(key);
-                  let payingNote = '';
-                  if (isTicked && applied != null) {
-                    if (applied >= row.remaining) payingNote = 'Paid in full';
-                    else if (applied > 0) payingNote = `Pays ${formatRupiah(applied)} (part)`;
-                    else payingNote = 'Not reached by this amount';
-                  }
-                  return (
-                    <li key={key}>
-                      <label className={`pay-pick-row${isTicked ? ' is-ticked' : ''}${canFindCustomer ? '' : ' is-locked'}`}>
-                        <input
-                          type="checkbox"
-                          checked={isTicked}
-                          disabled={busy || !canFindCustomer}
-                          onChange={() => toggleTick(key)}
-                        />
-                        <span className="pay-pick-main">
-                          <strong>{row.invoiceNo}</strong>
-                          <span className="hint">{formatDay(row.date)}</span>
-                        </span>
-                        <span className="pay-pick-amount">
-                          <strong>{formatRupiah(row.remaining)}</strong>
-                          {payingNote && <span className="hint">{payingNote}</span>}
-                        </span>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
-              {hasAmount && (
+              {villaGroups.map((group) => (
+                <div key={group.key}>
+                  {villaGroups.length > 1 && (
+                    <p className="pay-villa-label">
+                      <strong>{group.name}</strong>
+                      <span className="hint">
+                        {' '}· {formatRupiah(group.rows.reduce((total, row) => total + row.remaining, 0))}
+                      </span>
+                    </p>
+                  )}
+                  <ul className="pay-pick-list">
+                    {group.rows.map((row) => {
+                      const key = String(row.id);
+                      const isTicked = ticked.has(key);
+                      const outside = Boolean(range) && !inSelectedRange(row, range);
+                      const applied = tickChanged ? null : appliedById.get(key);
+                      let payingNote = '';
+                      if (isTicked && applied != null) {
+                        if (applied >= row.remaining) payingNote = 'Paid in full';
+                        else if (applied > 0) payingNote = `Pays ${formatRupiah(applied)} (part)`;
+                        else payingNote = 'Not reached by this amount';
+                      }
+                      return (
+                        <li key={key}>
+                          <label className={`pay-pick-row${isTicked ? ' is-ticked' : ''}${canFindCustomer ? '' : ' is-locked'}`}>
+                            <input
+                              type="checkbox"
+                              checked={isTicked}
+                              disabled={busy || !canFindCustomer}
+                              onChange={() => toggleTick(key)}
+                            />
+                            <span className="pay-pick-main">
+                              <strong>{row.invoiceNo}</strong>
+                              <span className="hint">
+                                {villaGroups.length === 1 && row.customerName ? `${row.customerName} · ` : ''}
+                                {formatDay(row.date)}
+                                {outside ? ' · outside this date range' : ''}
+                              </span>
+                            </span>
+                            <span className="pay-pick-amount">
+                              <strong>{formatRupiah(row.remaining)}</strong>
+                              {payingNote && <span className="hint">{payingNote}</span>}
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+              {hasAmount && ticked.size > 0 && (
                 <p className={`message pay-pick-sum ${pickSumClass}`}>
                   <span>Ticked {ticked.size} · <strong>{formatRupiah(tickedTotal)}</strong></span>
                   <span>Received <strong>{formatRupiah(amount)}</strong></span>
@@ -651,56 +823,14 @@ export default function PaymentDetail() {
                 </p>
               )}
               {canFindCustomer && tickChanged && (
-                <button type="button" className="btn btn-primary pay-pick-apply" disabled={busy} onClick={applyTicked}>
+                <button
+                  type="button"
+                  className="btn btn-primary pay-pick-apply"
+                  disabled={busy || multiVillaExcess || ticked.size > MAX_TICKS}
+                  onClick={applyTicked}
+                >
                   {busy ? 'Saving…' : `Use these ${ticked.size} invoice${ticked.size === 1 ? '' : 's'}`}
                 </button>
-              )}
-            </div>
-          )}
-
-          {canFindCustomer && (
-            <div className="name-suggest">
-              <label>
-                Find by invoice number
-                <input
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    setShowSuggestions(true);
-                  }}
-                  onFocus={() => setShowSuggestions(true)}
-                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                  placeholder="INV-079837, or a customer name"
-                  autoComplete="off"
-                />
-              </label>
-              <p className="hint">
-                Paste the invoice numbers you sent. For a group like Balinest, pick those invoices —
-                you do not need each villa name.
-              </p>
-              {showSuggestions && query.trim().length >= 2 && (
-                <div>
-                  {suggesting && <p className="hint">Searching…</p>}
-                  {!suggesting && suggestions.length === 0 && <p className="hint">No unpaid invoice match</p>}
-                  {suggestions.length > 0 && (
-                    <ul className="name-suggest-list" role="listbox">
-                      {suggestions.map((row) => (
-                        <li key={row.id}>
-                          <button
-                            type="button"
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => pickSuggestion(row)}
-                          >
-                            <strong>{row.invoiceNo || '—'}</strong>
-                            <span className="hint">
-                              {row.customerName || '—'} · {formatRupiah(row.remaining)}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
               )}
             </div>
           )}
@@ -710,13 +840,16 @@ export default function PaymentDetail() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={busy || !payment.matchedInvoiceId || !hasAmount}
+                disabled={busy || !payment.matchedInvoiceId || !hasAmount || (!tickChanged && multiVillaExcess)}
                 onClick={() => run(async () => {
                   if (!payment.matchedInvoiceId) throw new Error('Pick a customer first.');
                   if (!hasAmount) throw new Error('Wait for the amount to finish reading.');
                   if (!payment.statementVerified) await verifyPayment(id);
                   await approvePayment(id, {});
-                  setMessage('Recorded in Zoho as Bank Transfer.');
+                  const villas = new Set((payment.allocations || []).map((row) => row.customerId).filter(Boolean)).size;
+                  setMessage(villas > 1
+                    ? `Recorded in Zoho as ${villas} Bank Transfers, one per villa.`
+                    : 'Recorded in Zoho as Bank Transfer.');
                 })}
               >
                 {busy
@@ -729,8 +862,19 @@ export default function PaymentDetail() {
             </div>
           )}
 
+          {(payment.zohoPayments || []).length > 0 && payment.status !== 'approved' && (
+            <p className="message message-warn">
+              {payment.zohoPayments.length} villa payment{payment.zohoPayments.length === 1 ? '' : 's'} already recorded in Zoho.
+              Record again to finish the rest.
+            </p>
+          )}
+
           {payment.status === 'approved' && (
-            <p className="message message-ok">Saved in Zoho as Bank Transfer.</p>
+            <p className="message message-ok">
+              {(payment.zohoPayments || []).length > 1
+                ? `Saved in Zoho as ${payment.zohoPayments.length} Bank Transfers, one per villa.`
+                : 'Saved in Zoho as Bank Transfer.'}
+            </p>
           )}
         </section>
       </div>

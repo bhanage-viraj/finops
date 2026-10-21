@@ -43,7 +43,8 @@ async function geminiComplete({
             role: 'user',
             parts: [
               { text: prompt },
-              { inlineData: { mimeType, data: Buffer.from(bytes).toString('base64') } },
+              // Text-only calls (the assistant) omit the image. Vision calls always send one.
+              ...(bytes ? [{ inlineData: { mimeType, data: Buffer.from(bytes).toString('base64') } }] : []),
             ],
           }],
           generationConfig: {
@@ -101,4 +102,13 @@ export async function completeVision(request) {
     throw new Error(`The AI provider "${request.provider}" is not available.`);
   }
   return provider({ fetchImpl: globalThis.fetch, ...request });
+}
+
+/** Same provider call as vision, without an image. Assistant turns go through here. */
+export async function completeText(request) {
+  const provider = providers[request.provider || 'gemini'];
+  if (!provider) {
+    throw new Error(`The AI provider "${request.provider}" is not available.`);
+  }
+  return provider({ fetchImpl: globalThis.fetch, ...request, bytes: null, mimeType: null });
 }

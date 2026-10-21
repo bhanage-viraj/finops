@@ -291,8 +291,9 @@ export default function Payments() {
       >
         <h2>From WhatsApp</h2>
         <p className="hint">
-          Type the customer name from the chat (example: Toko Sariboga 29.9), then add the bank transfer screenshot:
-          paste it (Ctrl/Cmd+V), drag it here, or choose a file. Zoho records use payment mode Bank Transfer.
+          Type the customer name from the chat (example: AN Balinest, or Toko Sariboga 29.9), then add the bank transfer screenshot:
+          paste it (Ctrl/Cmd+V), drag it here, or choose a file. On the payment, set the date range and Select all to take every matching villa at once.
+          Zoho records one Bank Transfer per villa.
         </p>
         <label className="field">
           <span className="field-label">WhatsApp customer name</span>
@@ -301,7 +302,7 @@ export default function Payments() {
             value={caption}
             onChange={(event) => setCaption(event.target.value)}
             onKeyDown={onCaptionKey}
-            placeholder="Toko Sariboga 29.9"
+            placeholder="AN Balinest"
             autoComplete="off"
             disabled={busy}
           />

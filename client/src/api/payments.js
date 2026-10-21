@@ -46,10 +46,12 @@ export function deletePayment(id) {
   return api(`/payments/${id}`, { method: 'DELETE' });
 }
 
-export function fetchOpenInvoices(q = '', customerId = '') {
+export function fetchOpenInvoices(q = '', customerId = '', range = {}) {
   const query = new URLSearchParams();
   if (q) query.set('q', q);
   if (customerId) query.set('customerId', String(customerId));
+  if (range.from) query.set('from', range.from);
+  if (range.to) query.set('to', range.to);
   const suffix = query.toString() ? `?${query}` : '';
   return api(`/payments/invoices/open${suffix}`);
 }

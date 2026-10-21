@@ -45,6 +45,15 @@ const bankPaymentSchema = new Schema({
   zohoInvoiceId: { type: String, default: '' },
   zohoCustomerId: { type: String, default: '' },
   zohoPaymentId: { type: String, default: '' },
+  // One bank transfer can settle several Zoho customers (villas). One Zoho payment each.
+  zohoPayments: {
+    type: [new Schema({
+      customerId: { type: String, required: true },
+      paymentId: { type: String, required: true },
+      amount: integerRupiahField(),
+    }, { _id: false })],
+    default: [],
+  },
   matchedInvoice: {
     invoiceNumber: { type: String, default: '' },
     customerName: { type: String, default: '' },
@@ -62,7 +71,7 @@ const bankPaymentSchema = new Schema({
     enum: ['high', 'medium', 'low'],
     default: undefined,
   },
-  // One transfer can settle several invoices of the same customer. zohoInvoiceId is the first.
+  // One transfer can settle several invoices. Villas are separate Zoho customers; zohoInvoiceId is the first.
   allocations: {
     type: [new Schema({
       invoiceId: { type: String, required: true },
@@ -71,6 +80,8 @@ const bankPaymentSchema = new Schema({
       applied: integerRupiahField(),
       date: { type: String, default: '' },
       dueDate: { type: String, default: '' },
+      customerId: { type: String, default: '' },
+      customerName: { type: String, default: '' },
     }, { _id: false })],
     default: [],
   },

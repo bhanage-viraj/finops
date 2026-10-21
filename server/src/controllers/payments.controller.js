@@ -102,11 +102,12 @@ export function remove(env) {
 
 export function openInvoices(env) {
   return asyncHandler(async (req, res) => {
-    res.json({
-      invoices: await listOpenInvoices(env, req.query.q || '', {
-        customerId: req.query.customerId || '',
-      }),
+    const page = await listOpenInvoices(env, req.query.q || '', {
+      customerId: req.query.customerId || '',
+      fromDate: req.query.from || '',
+      toDate: req.query.to || '',
     });
+    res.json({ invoices: page.invoices, truncated: page.truncated });
   });
 }
 

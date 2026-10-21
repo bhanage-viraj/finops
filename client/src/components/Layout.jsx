@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
+import Assistant from './Assistant.jsx';
 import Sidebar from './Sidebar.jsx';
 
 export default function Layout() {
@@ -26,6 +27,7 @@ export default function Layout() {
           <Outlet />
         </div>
       </div>
+      <Assistant />
     </div>
   );
 }

@@ -6,7 +6,9 @@ import { nameSimilarity } from '../src/services/matching/normalizeName.js';
 import { STRONG_NAME } from '../src/services/matching/rules.js';
 import { assertPaymentExtraction } from '../src/services/ai/schemas.js';
 import { resolveCaptionDate, splitCaption } from '../src/services/payments/captionHints.js';
-import { customerSearchRank, parseInvoiceNumbers, selectOpenInvoices } from '../src/services/payments/paymentService.js';
+import {
+  MULTI_CUSTOMER_EXCESS, customerSearchRank, groupNameRank, parseInvoiceNumbers, planZohoPayments, selectOpenInvoices,
+} from '../src/services/payments/paymentService.js';
 
 function noDuplicates(t) {
   const original = BankPayment.find;
@@ -255,4 +257,55 @@ test('invoice numbers find unpaid invoices without the villa customer name', () 
   assert.equal(byNumber[0].invoiceNo, 'INV-079837');
   const pasted = selectOpenInvoices(rows, 'INV-079837 INV-088001');
   assert.deepEqual(pasted.map((row) => row.invoiceNo).sort(), ['INV-079837', 'INV-088001']);
+});
+
+test('a group name lists every villa, and the date range drops the rest', () => {
+  assert.equal(groupNameRank('AN Balinest', 'Balinest Villa Kristi'), 0);
+  assert.equal(groupNameRank('AN Balinest', 'Toko Sari Boga'), null);
+  const rows = [
+    {
+      id: '1', invoiceNo: 'INV-1', remaining: 100000, date: '2026-10-02',
+      customerName: 'Balinest Villa Kristi', erpCustomerId: 'c1',
+    },
+    {
+      id: '2', invoiceNo: 'INV-2', remaining: 200000, date: '2026-10-03',
+      customerName: 'Balinest Villa Ubud', erpCustomerId: 'c2',
+    },
+    {
+      id: '3', invoiceNo: 'INV-3', remaining: 300000, date: '2026-09-01',
+      customerName: 'Balinest Villa Ubud', erpCustomerId: 'c2',
+    },
+    {
+      id: '4', invoiceNo: 'INV-4', remaining: 400000, date: '2026-10-02',
+      customerName: 'Toko Sari Boga', erpCustomerId: 'c3',
+    },
+  ];
+  const found = selectOpenInvoices(rows, 'AN Balinest');
+  assert.deepEqual(found.map((row) => row.invoiceNo).sort(), ['INV-1', 'INV-2', 'INV-3']);
+  const october = selectOpenInvoices(rows, 'AN Balinest', { fromDate: '2026-10-01', toDate: '2026-10-31' });
+  assert.deepEqual(october.map((row) => row.invoiceNo).sort(), ['INV-1', 'INV-2']);
+  const oneVilla = selectOpenInvoices(rows, '', { customerId: 'c2', fromDate: '2026-10-01', toDate: '2026-10-31' });
+  assert.deepEqual(oneVilla.map((row) => row.invoiceNo), ['INV-2']);
+});
+
+test('several villas record as one Zoho payment each, and extra cannot sit on all of them', () => {
+  const exact = planZohoPayments([
+    { invoiceId: '1', applied: 100000, customerId: '10' },
+    { invoiceId: '2', applied: 50000, customerId: '20' },
+  ], { received: 150000 });
+  assert.equal(exact.error, undefined);
+  assert.deepEqual(exact.groups.map((group) => [group.customerId, group.amount]), [['10', 100000], ['20', 50000]]);
+
+  const one = planZohoPayments([
+    { invoiceId: '1', applied: 100000, customerId: '' },
+  ], { received: 150000, fallbackCustomerId: '55' });
+  assert.equal(one.groups.length, 1);
+  assert.equal(one.groups[0].customerId, '55');
+  assert.equal(one.groups[0].amount, 150000);
+
+  const extra = planZohoPayments([
+    { invoiceId: '1', applied: 100000, customerId: '10' },
+    { invoiceId: '2', applied: 50000, customerId: '20' },
+  ], { received: 200000 });
+  assert.equal(extra.error, MULTI_CUSTOMER_EXCESS);
 });

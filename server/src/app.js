@@ -15,6 +15,7 @@ import { createFollowUpRouter } from './routes/followUp.routes.js';
 import { createImportsRouter } from './routes/imports.routes.js';
 import { createPaymentsRouter } from './routes/payments.routes.js';
 import { createDeliveriesRouter } from './routes/deliveries.routes.js';
+import { createAssistantRouter } from './routes/assistant.routes.js';
 
 const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
 
@@ -42,7 +43,8 @@ export function createApp(env, options = {}) {
         || req.path.startsWith('/follow-up')
         || req.path.startsWith('/payments')
         || req.path.startsWith('/deliveries')
-        || req.path.startsWith('/imports');
+        || req.path.startsWith('/imports')
+        || req.path.startsWith('/assistant');
       if (apiPath && databaseStatus() !== 'connected') {
         res.status(503).json({ error: 'The database is not connected, so this action cannot be saved.' });
         return;
@@ -121,6 +123,7 @@ export function createApp(env, options = {}) {
   app.use('/payments', createPaymentsRouter(env));
   app.use('/deliveries', createDeliveriesRouter(env));
   app.use('/imports', createImportsRouter(env));
+  app.use('/assistant', createAssistantRouter(env));
 
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
@@ -133,7 +136,8 @@ export function createApp(env, options = {}) {
         || req.path.startsWith('/follow-up')
         || req.path.startsWith('/payments')
         || req.path.startsWith('/deliveries')
-        || req.path.startsWith('/imports');
+        || req.path.startsWith('/imports')
+        || req.path.startsWith('/assistant');
       if (apiPath) return next();
       sendSpa(res);
     });
