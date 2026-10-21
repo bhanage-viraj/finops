@@ -22,8 +22,13 @@ import {
   recordAreaHistory,
 } from './ensureRefs.js';
 import { nameKey } from './names.js';
-import { AREA_DEFS } from './areaCatalog.js';
+import { AREA_DEFS, fleetNameFromTab } from './areaCatalog.js';
 import { expandMapsLink } from './expandMapsLink.js';
+import {
+  fetchPublicSheetTab,
+  fetchPublicSheetTabs,
+  selectTabsForDate,
+} from './googleSheet.js';
 
 function isOrderListSheet(name) {
   return /^LIST\s/i.test(name) || /LIST\s+\d/i.test(name);
@@ -282,6 +287,132 @@ export async function importOrderWorkbook({
   return {
     day: day.toObject(),
     routes: routes.map((r) => r.toObject()),
+    summary,
+  };
+}
+
+/**
+ * Read one day's tabs from a public Google Sheet.
+ * Each tab is already one fleet. Stops stay in the sheet's order.
+ */
+export async function importPublicGoogleSheet({ url, date, user, env }) {
+  const dayDate = String(date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayDate)) throw httpError(400, 'Pick the delivery date.');
+
+  const { id, tabs } = await fetchPublicSheetTabs(url);
+  const chosen = selectTabsForDate(tabs, dayDate);
+  if (!chosen.length) {
+    throw httpError(400, `No lists for ${dayDate} on that sheet. The tabs are already split, for example 22 OCT - 1.SEMINYAK.`);
+  }
+
+  const parsedTabs = [];
+  const queue = chosen.slice();
+  async function worker() {
+    while (queue.length) {
+      const tab = queue.shift();
+      const buffer = await fetchPublicSheetTab(id, tab.gid);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer);
+      const sheet = workbook.worksheets[0];
+      if (!sheet) continue;
+      const parsed = parseRouteSheetRows(worksheetToRows(sheet), { sheetName: tab.name });
+      if (parsed.stops.length) parsedTabs.push(parsed);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, chosen.length) }, () => worker()));
+  parsedTabs.sort((a, b) => (a.area?.number || 0) - (b.area?.number || 0) || a.sheetName.localeCompare(b.sheetName));
+  if (!parsedTabs.length) throw httpError(400, 'Those tabs have no deliveries.');
+
+  await ensureSeedAreas();
+  const existing = await DeliveryDay.findOne({ date: dayDate });
+  if (existing) {
+    throw httpError(409, `A delivery day for ${dayDate} already exists. Delete it first, then use the sheet again.`);
+  }
+
+  const bookByName = await loadBookMap();
+  const day = await DeliveryDay.create({
+    date: dayDate,
+    label: `Google Sheet ${dayDate}`,
+    sourceFileKey: '',
+    sourceFileName: id,
+    status: 'draft',
+    importedBy: user?._id || null,
+    summary: { stopCount: 0 },
+  });
+
+  const stopDocs = [];
+  const routes = [];
+  for (const parsed of parsedTabs) {
+    const areaName = fleetNameFromTab(parsed.area);
+    const area = await ensureArea(areaName, {
+      number: parsed.area?.number || null,
+      isCustom: Boolean(parsed.area?.isCustom) || areaName !== parsed.area?.name,
+    });
+    let vehicle = null;
+    if (parsed.plate || parsed.vehicleLabel) {
+      vehicle = await ensureVehicle({
+        plate: parsed.plate || parsed.vehicleLabel.slice(0, 20),
+        label: parsed.vehicleLabel,
+      });
+    }
+    const driverIds = [];
+    for (const name of parsed.driverNames || []) {
+      const driver = await ensureDriver(name);
+      if (driver) driverIds.push(driver._id);
+    }
+    const route = await DeliveryRoute.create({
+      dayId: day._id,
+      areaId: area?._id || null,
+      areaName,
+      number: parsed.area?.number || null,
+      vehicleId: vehicle?._id || null,
+      vehicleLabel: parsed.vehicleLabel || '',
+      driverIds,
+      driverNames: parsed.driverNames || [],
+      stopOrder: [],
+      loadingTotals: {},
+      mapsFlag: Boolean(parsed.mapsFlag),
+      otwFlag: Boolean(parsed.otwFlag),
+      doneFlag: Boolean(parsed.doneFlag),
+    });
+    const stopIds = [];
+    for (let i = 0; i < parsed.stops.length; i += 1) {
+      const data = await materializeStop(parsed.stops[i], { dayId: day._id, bookByName });
+      data.routeId = route._id;
+      data.sortIndex = i;
+      const doc = await DeliveryStop.create(data);
+      stopIds.push(doc._id);
+      stopDocs.push(doc);
+      if (area) await recordAreaHistory(doc.deliveryCustomerId, area);
+    }
+    route.stopOrder = stopIds;
+    route.loadingTotals = loadingTotalsObject(stopDocs.filter((stop) => String(stop.routeId) === String(route._id)));
+    await route.save();
+    routes.push(route);
+  }
+
+  const summary = summarize(stopDocs);
+  summary.unassigned = 0;
+  day.summary = summary;
+  await day.save();
+
+  await writeAudit({
+    userId: user?._id,
+    action: 'import',
+    entity: 'deliveryDays',
+    entityId: day._id,
+    after: {
+      date: dayDate,
+      stopCount: summary.stopCount,
+      routes: routes.length,
+      source: 'google-sheet',
+      assignedTabs: true,
+    },
+  });
+
+  return {
+    day: day.toObject(),
+    routes: routes.map((route) => route.toObject()),
     summary,
   };
 }

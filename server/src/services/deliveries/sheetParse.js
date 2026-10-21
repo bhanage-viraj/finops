@@ -191,7 +191,13 @@ export function parseRouteSheetRows(rows, { sheetName = '' } = {}) {
       if (d) date = d;
     }
     if (/ARMADA/i.test(joined)) {
-      vehicleLabel = joined.replace(/ARMADA:\s*/i, '').trim();
+      const armadaCell = (row || []).find((value) => /ARMADA\s*:/i.test(String(value || '')));
+      vehicleLabel = String(armadaCell || joined)
+        .replace(/ARMADA:\s*/i, '')
+        .split(/ARMADA:/i)[0]
+        .replace(/\s*(MAPS|DONE|OTW).*/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
       const plateMatch = vehicleLabel.match(/\b([A-Z]{1,2}\s*\d{1,4}\s*[A-Z]{1,3})\b/i);
       if (plateMatch) plate = formatPlate(plateMatch[1]);
       // Flags often sit on the same row: MAPS / DONE as booleans in later columns

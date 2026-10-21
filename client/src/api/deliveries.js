@@ -24,6 +24,10 @@ export function fetchAtRisk(dayId) {
   return api(`/deliveries/${dayId}/at-risk`);
 }
 
+export function importDeliverySheet(url, date) {
+  return api('/deliveries/import-sheet', { method: 'POST', json: { url, date } });
+}
+
 export async function importDeliveryDay(file, date) {
   const body = new FormData();
   body.append('file', file);

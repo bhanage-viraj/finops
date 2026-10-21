@@ -2,6 +2,7 @@ import { asyncHandler } from '../utils/http.js';
 import {
   importOrderWorkbook,
   importHistoryWorkbook,
+  importPublicGoogleSheet,
   deleteDeliveryDay,
 } from '../services/deliveries/dayImport.js';
 import {
@@ -71,6 +72,18 @@ export function importDay(env) {
       env,
       dateOverride: req.body?.date || null,
       depot: depotFromEnv(env),
+    });
+    res.status(201).json(result);
+  });
+}
+
+export function importSheet(env) {
+  return asyncHandler(async (req, res) => {
+    const result = await importPublicGoogleSheet({
+      url: req.body?.url,
+      date: req.body?.date || null,
+      user: req.user,
+      env,
     });
     res.status(201).json(result);
   });

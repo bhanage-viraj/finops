@@ -4,6 +4,7 @@ import {
   meta,
   detail,
   importDay,
+  importSheet,
   importHistory,
   removeDay,
   needsLocation,
@@ -52,6 +53,7 @@ export function createDeliveriesRouter(env) {
   router.post('/settings/cartrack', admin, cartrackSetting());
 
   router.post('/import', ops, upload, importDay(env));
+  router.post('/import-sheet', ops, importSheet(env));
   router.post('/import-history', ops, upload, importHistory());
   // Read-only Cartrack: link ids + status sync. Job create stays blocked in the client.
   router.post('/cartrack/link-vehicles', admin, linkVehicles(env));

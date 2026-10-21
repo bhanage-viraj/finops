@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   fetchDeliveryDays,
   importDeliveryDay,
+  importDeliverySheet,
   importDeliveryHistory,
   deleteDeliveryDay,
   downloadDayExport,
@@ -24,6 +25,7 @@ export default function DeliveryDays() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [date, setDate] = useState(todayIso());
+  const [sheetUrl, setSheetUrl] = useState('https://docs.google.com/spreadsheets/d/1llG2YXO0zXdKj5-T0bEr88gTtNg7-lRAagQ_b8sSQls/edit?usp=sharing');
   const orderRef = useRef(null);
   const historyRef = useRef(null);
 
@@ -34,6 +36,24 @@ export default function DeliveryDays() {
   }
 
   useEffect(() => { load(); }, []);
+
+  async function onImportSheet() {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await importDeliverySheet(sheetUrl, date || undefined);
+      const id = result.day?._id || result.day?.id;
+      const fleets = result.routes?.length || 0;
+      setMessage(`Loaded ${result.summary?.stopCount || 0} deliveries in ${fleets} lists. Each tab stayed as it was split.`);
+      load();
+      if (id) navigate(`/deliver/${id}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function onImportOrder(event) {
     const file = event.target.files?.[0];
@@ -108,7 +128,7 @@ export default function DeliveryDays() {
       <header className="page-header">
         <div>
           <h1>Deliver</h1>
-          <p className="hint">Upload the Excel → auto Maps links → send to drivers by area.</p>
+          <p className="hint">Use the Google Sheet. Each tab stays as she already split it. Send to driver sends that list.</p>
         </div>
       </header>
 
@@ -116,23 +136,39 @@ export default function DeliveryDays() {
       {message && <p className="message message-ok">{message}</p>}
 
       <section className="card sheet-upload">
-        <h2>Upload sheet</h2>
+        <h2>Google Sheet</h2>
         <p className="hint">
-          Pick the delivery date, then upload the order workbook. Stops are split by area automatically
-          and each row gets a Google Maps link.
+          Pick the date, then use the public sheet. Seminyak stays Seminyak, Canggu stays Canggu.
+          The app adds the map links and does not move a stop to another list.
         </p>
         <div className="row gap wrap">
           <label className="field" style={{ margin: 0 }}>
             <span className="field-label">Date</span>
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
           </label>
+          <label className="field" style={{ margin: 0, minWidth: 280, flex: '1 1 320px' }}>
+            <span className="field-label">Google Sheet</span>
+            <input
+              value={sheetUrl}
+              onChange={(event) => setSheetUrl(event.target.value)}
+              placeholder="Public Google Sheets link"
+            />
+          </label>
           <button
             type="button"
             className="btn btn-primary"
+            disabled={busy || !date || !sheetUrl.trim()}
+            onClick={onImportSheet}
+          >
+            {busy ? 'Loading…' : 'Use this sheet'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
             disabled={busy || !date}
             onClick={() => orderRef.current?.click()}
           >
-            {busy ? 'Uploading…' : 'Upload Excel'}
+            Upload Excel
           </button>
           <input
             ref={orderRef}

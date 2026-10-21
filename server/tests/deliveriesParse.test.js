@@ -64,6 +64,7 @@ test('parseRouteSheetRows reads armada drivers and area from tab', () => {
   assert.equal(parsed.plate.replace(/\s+/g, ' ').trim().toUpperCase().includes('8619'), true);
   assert.deepEqual(parsed.driverNames, ['RISKI ADI', 'KINONG']);
   assert.equal(parsed.stops.length, 1);
+  assert.equal(parsed.vehicleLabel, 'ELF ( DK 8619 HJ )');
 });
 
 test('time tags recognise morning and no-evening notes', () => {

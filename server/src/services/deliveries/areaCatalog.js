@@ -130,6 +130,15 @@ export function normalizeAreaName(raw) {
   return null;
 }
 
+/** Exact area names stay canonical. A longer tab name, such as Ubud Motor, stays itself. */
+export function fleetNameFromTab(area) {
+  if (!area) return 'Fleet';
+  if (area.isCustom) return area.name;
+  if (nameKey(area.raw || '') === nameKey(area.name || '')) return area.name || 'Fleet';
+  const raw = String(area.raw || '').trim();
+  return raw || area.name || 'Fleet';
+}
+
 export function areaFromTabTitle(title) {
   const text = String(title || '');
   // "16 OKT - 2.CANGGU" / "15 OKT - 10. UBUD" / "14 OKT -3 CANGGU"
