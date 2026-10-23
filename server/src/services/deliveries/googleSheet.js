@@ -67,6 +67,17 @@ export function tabsForDeliveryDate(tabs, date) {
   return [...named, ...carried];
 }
 
+/**
+ * A tab already named for the delivery date is that day's list, even when
+ * the heading printed on it still says yesterday. Yesterday's tab is kept
+ * only when that heading was already changed to the delivery date.
+ */
+export function tabBelongsToDeliveryDate(tab, parsed, dayDate) {
+  if (tab?.namedForDate) return true;
+  const listDate = parsed?.headerDate || parsed?.date || null;
+  return !listDate || listDate === dayDate;
+}
+
 function cleanCsvCell(value) {
   const text = String(value || '').trim();
   if (!text) return null;

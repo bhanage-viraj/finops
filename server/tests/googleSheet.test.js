@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spreadsheetIdFromUrl, sheetTabsFromHtml, selectTabsForDate, csvToRows, tabsForDeliveryDate } from '../src/services/deliveries/googleSheet.js';
+import { spreadsheetIdFromUrl, sheetTabsFromHtml, selectTabsForDate, csvToRows, tabsForDeliveryDate, tabBelongsToDeliveryDate } from '../src/services/deliveries/googleSheet.js';
 import { areaFromTabTitle, fleetNameFromTab } from '../src/services/deliveries/areaCatalog.js';
 import { parseRouteSheetRows } from '../src/services/deliveries/sheetParse.js';
 
@@ -30,6 +30,15 @@ test('only the chosen date is kept, in her tab order', () => {
 test('a copied tab is not a second list for that date', () => {
   const tabs = selectTabsForDate(sheetTabsFromHtml(HTML), '2026-10-21');
   assert.deepEqual(tabs.map((tab) => tab.name), ['21 OCT - 2.CANGGU']);
+});
+
+test('a tab named for the day is kept when the printed heading still says yesterday', () => {
+  const named = { name: '24 OCT - 1. SEMINYAK', namedForDate: true };
+  const yesterday = { name: '23 OCT - 1. SEMINYAK', namedForDate: false };
+  const staleHeading = { headerDate: '2026-10-23', date: '2026-10-24' };
+  assert.equal(tabBelongsToDeliveryDate(named, staleHeading, '2026-10-24'), true);
+  assert.equal(tabBelongsToDeliveryDate(yesterday, staleHeading, '2026-10-24'), false);
+  assert.equal(tabBelongsToDeliveryDate(yesterday, { headerDate: '2026-10-24' }, '2026-10-24'), true);
 });
 
 test('yesterday is checked so a renamed heading still lands on the printed date', () => {

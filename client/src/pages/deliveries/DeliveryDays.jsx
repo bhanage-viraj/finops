@@ -149,7 +149,7 @@ export default function DeliveryDays() {
         <h2>Google Sheet</h2>
         <p className="hint">
           The date you pick is the delivery date. {displayDate(date) || 'That date'} loads the tabs named for that day,
-          for example 21 OCT. Seminyak stays Seminyak. A list whose heading says a different date is left out.
+          for example 24 OCT. Seminyak stays Seminyak. A tab already named for that day is loaded even when the title printed on the list still says the day before.
         </p>
         <div className="row gap wrap">
           <label className="field" style={{ margin: 0 }}>

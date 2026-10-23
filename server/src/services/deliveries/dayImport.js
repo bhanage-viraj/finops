@@ -28,6 +28,7 @@ import {
   fetchPublicSheetCsv,
   fetchPublicSheetTabs,
   tabsForDeliveryDate,
+  tabBelongsToDeliveryDate,
 } from './googleSheet.js';
 
 function isOrderListSheet(name) {
@@ -314,7 +315,6 @@ export async function importPublicGoogleSheet({ url, date, user, env }) {
   }
 
   const parsedTabs = [];
-  const skipped = [];
   const queue = chosen.slice();
   async function worker() {
     while (queue.length) {
@@ -327,22 +327,15 @@ export async function importPublicGoogleSheet({ url, date, user, env }) {
         if (err?.status) throw err;
         throw httpError(400, `Could not read ${tab.name}. Try again.`);
       }
-      // The date on the form is the delivery date. A heading that says another day stays out.
-      const listDate = parsed.headerDate || parsed.date;
-      if (listDate && listDate !== dayDate) {
-        if (tab.namedForDate) skipped.push({ name: tab.name, date: listDate });
-        continue;
-      }
+      // Tab title wins. The printed heading often still says yesterday after the tab is renamed.
+      if (!tabBelongsToDeliveryDate(tab, parsed, dayDate)) continue;
       if (parsed.stops.length) parsedTabs.push(parsed);
     }
   }
   await Promise.all(Array.from({ length: Math.min(6, chosen.length) }, () => worker()));
   parsedTabs.sort((a, b) => (a.area?.number || 0) - (b.area?.number || 0) || a.sheetName.localeCompare(b.sheetName));
   if (!parsedTabs.length) {
-    const other = skipped[0] ? displayDate(skipped[0].date) : '';
-    throw httpError(400, other
-      ? `No lists for ${shownDate}. Those tabs are dated ${other} on the sheet.`
-      : `No deliveries for ${shownDate} on that sheet.`);
+    throw httpError(400, `No deliveries for ${shownDate} on that sheet.`);
   }
 
   await ensureSeedAreas();
@@ -431,7 +424,7 @@ export async function importPublicGoogleSheet({ url, date, user, env }) {
     day: day.toObject(),
     routes: routes.map((route) => route.toObject()),
     summary,
-    skipped,
+    skipped: [],
   };
 }
 
