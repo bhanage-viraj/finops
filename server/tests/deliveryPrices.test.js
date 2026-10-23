@@ -33,6 +33,30 @@ test('a blank harga is filled from the list, and unknown products stay blank', (
   assert.equal(gallon.unitPrice, null);
 });
 
+test('glass gallon refill is Rp 50.000 when the sheet harga is blank', () => {
+  assert.equal(lookupUnitPrice('Galon Kaca 11L'), 50000);
+  assert.equal(lookupUnitPrice('glass gallon refill'), 50000);
+});
+
+test('a sheet price read as Rp50,000.00 is shown as Rp 50.000', () => {
+  const text = buildRouteWhatsAppMessage(
+    { areaName: 'Ungasan', dateLabel: '23/10/2026' },
+    [{
+      customerName: 'Putu Eka',
+      isNewCustomer: true,
+      plannedItems: [{ productName: 'Galon Kaca 11L', qty: 1, unitPrice: 5000000 }],
+      location: { lat: -8.8291, lng: 115.1634 },
+    }],
+  );
+  assert.match(text, /Galon Kaca 11L x1 Rp 50\.000/);
+  assert.doesNotMatch(text, /5\.000\.000/);
+  assert.doesNotMatch(text, /Route part|Full route|\*Route map\*/);
+  assert.match(text, /^https:\/\/maps\.google\.com\/\?q=-8\.8291,115\.1634$/m);
+  assert.doesNotMatch(text, /%2C|%20/);
+  assert.doesNotMatch(text, /🆕/);
+  assert.match(text, /NEW/);
+});
+
 test('driver WhatsApp line includes the price', () => {
   const text = buildRouteWhatsAppMessage(
     { areaName: 'Canggu', dateLabel: '16/10/2026' },

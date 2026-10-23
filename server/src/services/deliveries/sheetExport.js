@@ -3,7 +3,8 @@ import DeliveryDay from '../../models/DeliveryDay.js';
 import DeliveryRoute from '../../models/DeliveryRoute.js';
 import DeliveryStop from '../../models/DeliveryStop.js';
 import { httpError } from '../../utils/http.js';
-import { mapsSearchUrl } from './mapsLink.js';
+import { driverMapUrl } from './mapsLink.js';
+import { repairSheetUnitPrice } from './money.js';
 import { buildLoadingList } from './loadingList.js';
 
 function formatDateLabel(iso) {
@@ -61,9 +62,9 @@ export async function exportDayWorkbook(dayId) {
         stop.location?.placeName || '',
         stop.location?.address || '',
         first.qty ?? '',
-        first.unitPrice ?? '',
+        repairSheetUnitPrice(first.unitPrice) ?? '',
         stop.status,
-        mapsSearchUrl(stop),
+        driverMapUrl(stop),
         stop.delivered?.items?.[0]?.qty ?? '',
         stop.delivered?.emptiesReturned ?? '',
         stop.delivered?.notaNo || '',
@@ -79,7 +80,7 @@ export async function exportDayWorkbook(dayId) {
           '',
           '',
           item.qty ?? '',
-          item.unitPrice ?? '',
+          repairSheetUnitPrice(item.unitPrice) ?? '',
           '',
           '',
           '',

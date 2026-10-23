@@ -8,7 +8,7 @@ import {
   resolveLocation,
   isVagueAddress,
 } from '../src/services/deliveries/locationResolver.js';
-import { mapsSearchUrl, routeDirectionsLinks, MAX_WAYPOINTS } from '../src/services/deliveries/mapsLink.js';
+import { mapsSearchUrl, driverMapUrl, routeDirectionsLinks, MAX_WAYPOINTS } from '../src/services/deliveries/mapsLink.js';
 import { assignArea } from '../src/services/deliveries/areaAssigner.js';
 import { areaFromTabTitle, normalizeAreaName } from '../src/services/deliveries/areaCatalog.js';
 
@@ -60,6 +60,35 @@ test('book location wins when confirmed', () => {
   assert.equal(loc.source, 'book');
   assert.equal(loc.confidence, 'high');
   assert.equal(loc.lat, -8.65);
+});
+
+test('driver map link is a short tappable url, not the whole address', () => {
+  const pasted = driverMapUrl({
+    location: {
+      mapsUrl: 'https://maps.app.goo.gl/jCdnh3kQhn7c9v6A7',
+      lat: -8.6,
+      lng: 115.1,
+    },
+  });
+  assert.equal(pasted, 'https://maps.app.goo.gl/jCdnh3kQhn7c9v6A7');
+
+  const pin = driverMapUrl({
+    location: {
+      lat: -8.669187500000005,
+      lng: 115.15885937499999,
+      mapsUrl: 'https://www.google.com/maps/search/?api=1&query=White%20Residence%2C%20Bali',
+    },
+  });
+  assert.equal(pin, 'https://maps.google.com/?q=-8.669188,115.158859');
+
+  const addressOnly = driverMapUrl({
+    customerName: 'White residence',
+    location: {
+      address: 'Jl. Intan Permai, Kerobokan Kelod, Badung, Bali',
+      mapsUrl: 'https://www.google.com/maps/search/?api=1&query=White%20Residence%2C%20Bali',
+    },
+  });
+  assert.equal(addressOnly, '');
 });
 
 test('mapsSearchUrl prefers coordinates and encodes special characters', () => {

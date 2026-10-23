@@ -1,3 +1,5 @@
+import { repairSheetUnitPrice } from './money.js';
+
 /**
  * Standard bottle prices from the delivery price sheet (integer rupiah).
  * HARGA B2B NORMAL is the default. Amed uses its own column when that area
@@ -6,6 +8,7 @@
  */
 
 const B2B_NORMAL = {
+  'glass:11': 50000,
   'still:330': 12000,
   'still:750': 16000,
   'sparkling:330': 13000,
@@ -30,6 +33,7 @@ const B2B_AMED = {
 
 function productKey(productName, packType) {
   const text = `${productName || ''} ${packType || ''}`.toLowerCase();
+  if (/galon\s*kaca|glass\s*gallon|kaca\s*11/.test(text)) return { key: 'glass', size: 11 };
   if (/ice\s*tube|es\s*tube/.test(text)) return { key: 'ice-tube', size: kgSize(text) };
   if (/ice\s*cube|es\s*batu/.test(text)) return { key: 'ice-cube', size: kgSize(text) };
 
@@ -68,7 +72,10 @@ export function lookupUnitPrice(productName, { areaName = '', packType = '' } = 
 /** Keep a harga already on the line. Fill only a blank price from the list. */
 export function applyListPrices(items, areaName) {
   return (items || []).map((item) => {
-    if (Number.isInteger(item.unitPrice)) return item;
+    const repaired = repairSheetUnitPrice(item.unitPrice);
+    if (Number.isInteger(repaired)) {
+      return repaired === item.unitPrice ? item : { ...item, unitPrice: repaired };
+    }
     const price = lookupUnitPrice(item.productName, { areaName, packType: item.packType });
     if (!Number.isInteger(price)) return item;
     return { ...item, unitPrice: price };

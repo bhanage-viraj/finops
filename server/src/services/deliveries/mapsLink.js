@@ -1,4 +1,8 @@
+import { coordsFromMapsUrl } from './locationResolver.js';
+
 /** Build keyless Google Maps URLs from stop data. */
+
+const SHORT_LINK = /https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps)\/[\w-]+/i;
 
 export const MAX_WAYPOINTS = 9;
 
@@ -21,6 +25,39 @@ export function stopQuery(stop) {
   const parts = [loc.placeName, loc.address, 'Bali'].filter((p) => p && String(p).trim());
   if (parts.length === 0 && stop.customerName) parts.push(stop.customerName, 'Bali');
   return parts.join(', ');
+}
+
+function roundCoord(value) {
+  return String(Math.round(Number(value) * 1e6) / 1e6);
+}
+
+/**
+ * One short link a driver can tap in WhatsApp.
+ * Full-route maps and encoded address searches are left out: they wrap,
+ * WhatsApp will not open them, and the pin is often wrong.
+ * A link the admin pasted is kept. A pin we already have becomes a short q= link.
+ */
+export function driverMapUrl(stop) {
+  const loc = stop.location || {};
+  if (loc.hideMap) return '';
+  const raw = String(loc.mapsUrl || '').trim();
+  const short = raw.match(SHORT_LINK);
+  if (short) return short[0];
+
+  const generated = /google\.com\/maps\/search\/\?api=1&query=/i.test(raw);
+  if (raw && !generated && /^https?:\/\//i.test(raw) && !/\s/.test(raw)) {
+    const fromPaste = coordsFromMapsUrl(raw);
+    if (fromPaste) {
+      return `https://maps.google.com/?q=${roundCoord(fromPaste.lat)},${roundCoord(fromPaste.lng)}`;
+    }
+    if (!/%20|%2C/i.test(raw) && raw.length <= 200) return raw;
+  }
+
+  const point = Number.isFinite(loc.lat) && Number.isFinite(loc.lng)
+    ? { lat: loc.lat, lng: loc.lng }
+    : coordsFromMapsUrl(raw);
+  if (!point) return '';
+  return `https://maps.google.com/?q=${roundCoord(point.lat)},${roundCoord(point.lng)}`;
 }
 
 export function mapsSearchUrl(stop) {

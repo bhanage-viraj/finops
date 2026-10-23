@@ -1,4 +1,4 @@
-import { parseRupiah } from './money.js';
+import { parseRupiah, repairSheetUnitPrice } from './money.js';
 import { nameKey } from './names.js';
 
 /**
@@ -35,7 +35,8 @@ export function compareNota(stop, nota) {
       if (Number(act.qty) > Number(plan.qty)) flags.push('qty_more');
       else flags.push('qty_less');
     }
-    if (plan.unitPrice != null && act.unitPrice != null && Number(plan.unitPrice) !== Number(act.unitPrice)) {
+    const planPrice = repairSheetUnitPrice(plan.unitPrice);
+    if (planPrice != null && act.unitPrice != null && Number(planPrice) !== Number(act.unitPrice)) {
       flags.push('price_diff');
     }
   }

@@ -79,8 +79,12 @@ function isEmptyRow(row) {
 }
 
 function isSummaryRow(row) {
-  const b = String(cell(row, 1) || '');
-  return /^(GALON\s*:|yang bertanggung|Produksi)/i.test(b) || /GALON\s*:/i.test(b);
+  const b = String(cell(row, 1) || '').trim();
+  if (!b) return false;
+  if (/^(yang bertanggung|produksi)\b/i.test(b)) return true;
+  // Footer tallies, not customers: "GALON : 87 GALON", "GALON KACA : 2 GALON".
+  if (/:\s*\d/.test(b) && /\b(galon|gallon|pcs|pack|kp|box|botol|krat|dispenser)\b/i.test(b)) return true;
+  return /^(galon|gallon|dispenser)\b/i.test(b) && /:/.test(b);
 }
 
 /**
@@ -95,7 +99,9 @@ export function parseOrderListRows(rows, { sheetName = '', bookByName = new Map(
 
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i];
-    if (isEmptyRow(row) || isHeaderRow(row) || isSummaryRow(row)) continue;
+    if (isEmptyRow(row) || isHeaderRow(row)) continue;
+    // The gallon tally is the end of the list. Rows under it are not deliveries.
+    if (isSummaryRow(row)) break;
 
     const no = cell(row, 0);
     const customer = cell(row, 1);

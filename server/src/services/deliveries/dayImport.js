@@ -11,7 +11,6 @@ import { parseOrderListRows, parseRouteSheetRows, worksheetToRows, parseDelivery
 import { groupStopsByArea } from './areaAssigner.js';
 import { orderStops } from './stopOrder.js';
 import { loadingTotalsObject } from './loadingList.js';
-import { mapsSearchUrl } from './mapsLink.js';
 import {
   ensureSeedAreas,
   ensureArea,
@@ -78,7 +77,7 @@ async function materializeStop(raw, { dayId, bookByName }) {
         lng: expanded.lng,
         source: 'maps_link',
         confidence: 'high',
-        mapsUrl: expanded.finalUrl || location.mapsUrl,
+        mapsUrl: location.mapsUrl,
         needsPin: false,
       };
       if (customer && !customer.location?.confirmedAt) {
@@ -93,10 +92,6 @@ async function materializeStop(raw, { dayId, bookByName }) {
       }
     }
   }
-  if (!location.mapsUrl) {
-    location.mapsUrl = mapsSearchUrl({ location, customerName: raw.customerName });
-  }
-
   const isNew = Boolean(raw.isNewCustomer);
   return {
     dayId,

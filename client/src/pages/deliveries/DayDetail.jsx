@@ -26,12 +26,17 @@ import LocationMap from './LocationMap.jsx';
 function mapsUrl(stop) {
   const loc = stop.location || {};
   if (loc.hideMap) return '';
-  if (loc.mapsUrl) return loc.mapsUrl;
-  if (loc.lat != null && loc.lng != null) {
-    return `https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lng}`;
+  const raw = String(loc.mapsUrl || '').trim();
+  const short = raw.match(/https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps)\/[\w-]+/i);
+  if (short) return short[0];
+  if (loc.lat != null && loc.lng != null && Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng))) {
+    const lat = Math.round(Number(loc.lat) * 1e6) / 1e6;
+    const lng = Math.round(Number(loc.lng) * 1e6) / 1e6;
+    return `https://maps.google.com/?q=${lat},${lng}`;
   }
-  const q = encodeURIComponent([loc.placeName, loc.address, 'Bali'].filter(Boolean).join(', '));
-  return q ? `https://www.google.com/maps/search/?api=1&query=${q}` : '';
+  if (raw && !/%20|%2C/i.test(raw) && raw.length <= 200) return raw;
+  const q = [loc.placeName, loc.address].filter(Boolean).join(', ');
+  return q ? `https://maps.google.com/?q=${encodeURIComponent(q)}` : '';
 }
 
 function cargoLabel(totals) {

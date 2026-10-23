@@ -13,6 +13,10 @@ test('parseRupiah handles dots and Rp prefix as integer', () => {
   assert.equal(parseRupiah(13200.0).amount, 13200);
   assert.equal(parseRupiah('').missing, true);
   assert.equal(parseRupiah(null).amount, null);
+  assert.equal(parseRupiah('Rp50,000.00').amount, 50000);
+  assert.equal(parseRupiah('Rp22,000.00').amount, 22000);
+  assert.equal(parseRupiah('Rp5,500.00').amount, 5500);
+  assert.equal(parseRupiah('Rp 1.200.000').amount, 1200000);
 });
 
 test('parseQty never invents 0 from blank', () => {
@@ -44,6 +48,21 @@ test('parseOrderListRows handles blank continuation and letter IDs', () => {
   assert.ok(stops[1].timeTags.includes('kirim_pagi'));
   assert.equal(stops[2].plannedItems[0].qtyMissing, true);
   assert.equal(stops[2].plannedItems[0].qty, null);
+});
+
+test('footer tallies are not customers, and sheet harga keeps the sen off', () => {
+  const rows = [
+    ['NO', 'CUSTOMER', 'QTY PACK', 'PESANAN', 'NOTE', 'AREA', 'ALAMAT', 'QTY', 'HARGA'],
+    [6, 'Putu Eka', null, 'Galon Kaca 11L', 'Gallon Refill', null, 'Jln Raya', 1, 'Rp50,000.00'],
+    [null, 'GALON KACA : 1 GALON', null, 'STILL 750ML : 11 KP', null, null, null, null, null],
+    [null, null, null, 'SPARKLING 750ML : 4 KP', null, null, null, null, null],
+    [null, 'DISPENSER : 2 PCS', null, null, null, null, null, null, null],
+  ];
+  const { stops } = parseOrderListRows(rows, { sheetName: 'LIST 23 OKT 26' });
+  assert.equal(stops.length, 1);
+  assert.equal(stops[0].customerName, 'Putu Eka');
+  assert.equal(stops[0].plannedItems.length, 1);
+  assert.equal(stops[0].plannedItems[0].unitPrice, 50000);
 });
 
 test('parseRouteSheetRows reads armada drivers and area from tab', () => {
