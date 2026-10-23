@@ -79,16 +79,22 @@ test('driver map link is a short tappable url, not the whole address', () => {
       mapsUrl: 'https://www.google.com/maps/search/?api=1&query=White%20Residence%2C%20Bali',
     },
   });
-  assert.equal(pin, 'https://maps.google.com/?q=-8.669188,115.158859');
+  assert.equal(pin, 'https://maps.google.com/?q=-8.669188%2C115.158859');
 
   const addressOnly = driverMapUrl({
     customerName: 'White residence',
     location: {
-      address: 'Jl. Intan Permai, Kerobokan Kelod, Badung, Bali',
-      mapsUrl: 'https://www.google.com/maps/search/?api=1&query=White%20Residence%2C%20Bali',
+      placeName: 'White Residence',
+      address: 'Jl. Intan Permai, Kerobokan Kelod, Kec. Kuta Utara, Kabupaten Badung, Bali',
+      mapsUrl: 'https://www.google.com/maps/search/?api=1&query=White%20Residence%2C%20Jl.%20Intan%20Permai%2C%20Kerobokan',
     },
   });
-  assert.equal(addressOnly, '');
+  assert.equal(
+    addressOnly,
+    'https://maps.google.com/?q=White+Residence+Jl.+Intan+Permai+Kerobokan+Kelod+Kec.+Kuta+Utara+Kabupaten+Badung+Bali',
+  );
+  assert.equal(addressOnly.includes('%20'), false);
+  assert.match(addressOnly, /Kabupaten\+Badung/);
 });
 
 test('mapsSearchUrl prefers coordinates and encodes special characters', () => {

@@ -11,6 +11,7 @@ import { parseOrderListRows, parseRouteSheetRows, worksheetToRows, parseDelivery
 import { groupStopsByArea } from './areaAssigner.js';
 import { orderStops } from './stopOrder.js';
 import { loadingTotalsObject } from './loadingList.js';
+import { driverMapUrl } from './mapsLink.js';
 import {
   ensureSeedAreas,
   ensureArea,
@@ -93,6 +94,8 @@ async function materializeStop(raw, { dayId, bookByName }) {
       }
     }
   }
+  const accurate = driverMapUrl({ location, customerName: raw.customerName });
+  if (accurate) location.mapsUrl = accurate;
   const isNew = Boolean(raw.isNewCustomer);
   return {
     dayId,

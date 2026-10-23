@@ -31,11 +31,50 @@ function roundCoord(value) {
   return String(Math.round(Number(value) * 1e6) / 1e6);
 }
 
+function coordLink(lat, lng) {
+  // %2C keeps the pin one link. A raw comma is where WhatsApp stops the tap.
+  return `https://maps.google.com/?q=${roundCoord(lat)}%2C${roundCoord(lng)}`;
+}
+
+/** One word at a time, joined with +. The full address stays in the link, and WhatsApp can open it. */
+function plusQuery(text) {
+  const cleaned = String(text || '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[,;]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+  const query = cleaned.split(' ').map((word) => encodeURIComponent(word)).join('+');
+  return `https://maps.google.com/?q=${query}`;
+}
+
+function addressQuery(stop) {
+  const loc = stop.location || {};
+  const place = String(loc.placeName || '').trim();
+  const address = String(loc.address || '').trim();
+  const bits = [];
+  if (place) bits.push(place);
+  if (address && address.toLowerCase() !== place.toLowerCase()) bits.push(address);
+  if (!bits.length && loc.plusCode) bits.push(String(loc.plusCode));
+  if (!bits.length && stop.customerName) bits.push(String(stop.customerName));
+  if (bits.length && !/\bbali\b/i.test(bits.join(' '))) bits.push('Bali');
+  return plusQuery(bits.join(' '));
+}
+
+function textFromGeneratedUrl(raw) {
+  const match = String(raw || '').match(/[?&](?:query|q)=([^&]+)/i);
+  if (!match) return '';
+  try {
+    return decodeURIComponent(match[1].replace(/\+/g, ' '));
+  } catch {
+    return '';
+  }
+}
+
 /**
- * One short link a driver can tap in WhatsApp.
- * Full-route maps and encoded address searches are left out: they wrap,
- * WhatsApp will not open them, and the pin is often wrong.
- * A link the admin pasted is kept. A pin we already have becomes a short q= link.
+ * The most accurate link a driver can tap.
+ * A pasted short link wins. A saved pin is the exact coordinate.
+ * Otherwise the whole address is searched, not a shortened street name.
  */
 export function driverMapUrl(stop) {
   const loc = stop.location || {};
@@ -44,20 +83,27 @@ export function driverMapUrl(stop) {
   const short = raw.match(SHORT_LINK);
   if (short) return short[0];
 
-  const generated = /google\.com\/maps\/search\/\?api=1&query=/i.test(raw);
+  const generated = /google\.com\/maps\/search\/\?api=1&query=/i.test(raw)
+    || /maps\.google\.com\/\?q=/i.test(raw);
   if (raw && !generated && /^https?:\/\//i.test(raw) && !/\s/.test(raw)) {
     const fromPaste = coordsFromMapsUrl(raw);
-    if (fromPaste) {
-      return `https://maps.google.com/?q=${roundCoord(fromPaste.lat)},${roundCoord(fromPaste.lng)}`;
-    }
-    if (!/%20|%2C/i.test(raw) && raw.length <= 200) return raw;
+    if (fromPaste) return coordLink(fromPaste.lat, fromPaste.lng);
+    if (!/%20/i.test(raw)) return raw;
   }
 
-  const point = Number.isFinite(loc.lat) && Number.isFinite(loc.lng)
-    ? { lat: loc.lat, lng: loc.lng }
-    : coordsFromMapsUrl(raw);
-  if (!point) return '';
-  return `https://maps.google.com/?q=${roundCoord(point.lat)},${roundCoord(point.lng)}`;
+  if (Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) {
+    return coordLink(loc.lat, loc.lng);
+  }
+  const fromUrl = coordsFromMapsUrl(raw);
+  if (fromUrl) return coordLink(fromUrl.lat, fromUrl.lng);
+
+  const decoded = textFromGeneratedUrl(raw);
+  const decodedCoords = decoded.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
+  if (decodedCoords) return coordLink(decodedCoords[1], decodedCoords[2]);
+
+  const fromAddress = addressQuery(stop);
+  if (fromAddress) return fromAddress;
+  return plusQuery(decoded);
 }
 
 export function mapsSearchUrl(stop) {

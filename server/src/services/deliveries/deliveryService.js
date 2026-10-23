@@ -13,7 +13,7 @@ import { loadingTotalsObject } from './loadingList.js';
 import { buildRouteWhatsAppMessage, whatsappUrl } from './whatsappMessage.js';
 import { extraFleetName, fleetMapsAfterMove, plannedLines, stopsKeptOnSheet } from './mapsFreshness.js';
 import { applyListPrices } from './priceList.js';
-import { mapsSearchUrl } from './mapsLink.js';
+import { driverMapUrl, mapsSearchUrl } from './mapsLink.js';
 import { coordsFromMapsUrl, parseDms, parsePlusCode, parseDecimalCoords } from './locationResolver.js';
 import { expandMapsLink } from './expandMapsLink.js';
 import { createFileStorage, extensionFor } from '../storage/fileStorage.js';
@@ -44,10 +44,16 @@ export async function getDayDetail(dayId) {
     }
   }
   const areaByRoute = new Map(routes.map((route) => [String(route._id), route.areaName]));
-  const stops = (await DeliveryStop.find({ dayId }).sort({ sortIndex: 1 }).lean()).map((stop) => ({
-    ...stop,
-    plannedItems: applyListPrices(stop.plannedItems, areaByRoute.get(String(stop.routeId))),
-  }));
+  const stops = (await DeliveryStop.find({ dayId }).sort({ sortIndex: 1 }).lean()).map((stop) => {
+    const location = stop.location?.hideMap
+      ? stop.location
+      : { ...stop.location, mapsUrl: driverMapUrl(stop) || stop.location?.mapsUrl || '' };
+    return {
+      ...stop,
+      location,
+      plannedItems: applyListPrices(stop.plannedItems, areaByRoute.get(String(stop.routeId))),
+    };
+  });
   return { day, routes, stops };
 }
 
@@ -77,7 +83,6 @@ export async function setStopLocation(stopId, user, body) {
     if (fromUrl) {
       lat = fromUrl.lat;
       lng = fromUrl.lng;
-      mapsUrl = fromUrl.finalUrl || mapsUrl;
       source = 'maps_link';
     }
   }
@@ -105,7 +110,16 @@ export async function setStopLocation(stopId, user, body) {
     lat,
     lng,
     source,
-    mapsUrl: mapsUrl || mapsSearchUrl({ location: { lat, lng } }),
+    mapsUrl: driverMapUrl({
+      customerName: stop.customerName,
+      location: {
+        lat,
+        lng,
+        mapsUrl,
+        placeName: body.placeName || stop.location?.placeName || '',
+        address: body.address || stop.location?.address || '',
+      },
+    }) || mapsSearchUrl({ location: { lat, lng } }),
     hideMap: false,
     placeName: body.placeName || stop.location?.placeName || '',
     address: body.address || stop.location?.address || '',

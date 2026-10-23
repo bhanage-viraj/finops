@@ -29,14 +29,17 @@ function mapsUrl(stop) {
   const raw = String(loc.mapsUrl || '').trim();
   const short = raw.match(/https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps)\/[\w-]+/i);
   if (short) return short[0];
+  if (/^https:\/\/maps\.google\.com\/\?q=/i.test(raw) && !/\s/.test(raw)) return raw;
   if (loc.lat != null && loc.lng != null && Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng))) {
     const lat = Math.round(Number(loc.lat) * 1e6) / 1e6;
     const lng = Math.round(Number(loc.lng) * 1e6) / 1e6;
-    return `https://maps.google.com/?q=${lat},${lng}`;
+    return `https://maps.google.com/?q=${lat}%2C${lng}`;
   }
-  if (raw && !/%20|%2C/i.test(raw) && raw.length <= 200) return raw;
-  const q = [loc.placeName, loc.address].filter(Boolean).join(', ');
-  return q ? `https://maps.google.com/?q=${encodeURIComponent(q)}` : '';
+  if (raw && !/%20/i.test(raw) && !/\s/.test(raw)) return raw;
+  const text = [loc.placeName, loc.address].filter(Boolean).join(' ');
+  if (!text) return '';
+  const query = text.replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim().split(' ').map(encodeURIComponent).join('+');
+  return `https://maps.google.com/?q=${query}`;
 }
 
 function cargoLabel(totals) {

@@ -91,7 +91,7 @@ export function extractMapsLink(text) {
 export function coordsFromMapsUrl(url) {
   const text = String(url || '');
   const patterns = [
-    /[?&]q=(-?\d+\.\d+)[, ](-?\d+\.\d+)/i,
+    /[?&]q=(-?\d+\.\d+)(?:%2C|,|\s)(-?\d+\.\d+)/i,
     /[?&]query=(-?\d+\.\d+)(?:%2C|,)(-?\d+\.\d+)/i,
     /\/@(-?\d+\.\d+),(-?\d+\.\d+)/,
     /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/,
