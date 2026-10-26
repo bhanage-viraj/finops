@@ -9,7 +9,6 @@ import {
   downloadDayExport,
 } from '../../api/deliveries.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
-import SpeedCharts from './SpeedCharts.jsx';
 
 function displayDate(iso) {
   const [year, month, day] = String(iso || '').split('-');
@@ -141,12 +140,11 @@ export default function DeliveryDays() {
           <h1>Deliver</h1>
           <p className="hint">Use the Google Sheet. Each tab stays as she already split it. Send to driver sends that list.</p>
         </div>
+        <Link className="btn btn-secondary" to="/deliver/speed">Car speed</Link>
       </header>
 
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
-
-      <SpeedCharts />
 
       <section className="card sheet-upload">
         <h2>Google Sheet</h2>

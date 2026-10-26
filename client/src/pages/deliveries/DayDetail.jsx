@@ -22,7 +22,6 @@ import {
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 import LocationMap from './LocationMap.jsx';
-import SpeedCharts from './SpeedCharts.jsx';
 
 function mapsUrl(stop) {
   const loc = stop.location || {};
@@ -468,8 +467,6 @@ export default function DayDetail() {
 
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
-
-      <SpeedCharts dayId={dayId} />
 
       {picked.size > 0 && (
         <section className="card delivery-move">

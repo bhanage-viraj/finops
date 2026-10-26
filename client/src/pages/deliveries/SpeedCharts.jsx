@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { fetchDaySpeed, fetchFleetSpeed } from '../../api/deliveries.js';
 
 const WITA_MS = 8 * 60 * 60 * 1000;
@@ -239,10 +240,12 @@ export default function SpeedCharts({ dayId }) {
   const failed = vehicles.length > 0 && vehicles.every((vehicle) => vehicle.error);
 
   return (
-    <section className="speed-section" aria-label="Speed">
+    <div className="page sheet-page">
+      <section className="speed-section" aria-label="Speed">
       <div className="speed-head">
         <div>
-          <h2>Speed</h2>
+          <p className="hint"><Link to="/deliver">Deliver</Link></p>
+          <h1>Speed</h1>
           <p className="hint">
             {data?.from && data.to && data.from !== data.to
               ? `${data.from}–${data.to}. Every car from Cartrack, with or without a delivery. Above ${limit} km/h is marked.`
@@ -307,6 +310,7 @@ export default function SpeedCharts({ dayId }) {
           );
         })}
       </div>
-    </section>
+      </section>
+    </div>
   );
 }
