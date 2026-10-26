@@ -30,6 +30,8 @@ test('decimal coords and maps URL coords', () => {
   assert.deepEqual(parseDecimalCoords('-8.65, 115.14'), { lat: -8.65, lng: 115.14 });
   const fromUrl = coordsFromMapsUrl('https://www.google.com/maps/search/?api=1&query=-8.65,115.14');
   assert.deepEqual(fromUrl, { lat: -8.65, lng: 115.14 });
+  const fromPlus = coordsFromMapsUrl('https://maps.google.com/?q=-8.669188+115.158859');
+  assert.deepEqual(fromPlus, { lat: -8.669188, lng: 115.158859 });
 });
 
 test('vague address needs pin; full address does not invent coords', () => {
@@ -79,7 +81,8 @@ test('driver map link is a short tappable url, not the whole address', () => {
       mapsUrl: 'https://www.google.com/maps/search/?api=1&query=White%20Residence%2C%20Bali',
     },
   });
-  assert.equal(pin, 'https://maps.google.com/?q=-8.669188%2C115.158859');
+  assert.equal(pin, 'https://maps.google.com/?q=-8.669188+115.158859');
+  assert.equal(pin.includes('%'), false);
 
   const addressOnly = driverMapUrl({
     customerName: 'White residence',
@@ -93,8 +96,35 @@ test('driver map link is a short tappable url, not the whole address', () => {
     addressOnly,
     'https://maps.google.com/?q=White+Residence+Jl.+Intan+Permai+Kerobokan+Kelod+Kec.+Kuta+Utara+Kabupaten+Badung+Bali',
   );
-  assert.equal(addressOnly.includes('%20'), false);
+  assert.equal(addressOnly.includes('%'), false);
   assert.match(addressOnly, /Kabupaten\+Badung/);
+
+  const slash = driverMapUrl({
+    location: {
+      placeName: 'Villa',
+      address: 'Jl. Raya No.88/12 & Co, Canggu, Bali',
+    },
+  });
+  assert.equal(
+    slash,
+    'https://maps.google.com/?q=Villa+Jl.+Raya+No.88+12+and+Co+Canggu+Bali',
+  );
+  assert.equal(slash.includes('%'), false);
+
+  const longPaste = driverMapUrl({
+    location: {
+      mapsUrl: 'https://www.google.com/maps/place/Villa/@-8.669188,115.158859,17z',
+    },
+  });
+  assert.equal(longPaste, 'https://maps.google.com/?q=-8.669188+115.158859');
+
+  const code = parsePlusCode('84RM+7PH');
+  const fromCode = driverMapUrl({
+    location: { plusCode: '84RM+7PH', address: 'Canggu' },
+  });
+  const lat = Math.round(code.lat * 1e6) / 1e6;
+  const lng = Math.round(code.lng * 1e6) / 1e6;
+  assert.equal(fromCode, `https://maps.google.com/?q=${lat}+${lng}`);
 });
 
 test('mapsSearchUrl prefers coordinates and encodes special characters', () => {

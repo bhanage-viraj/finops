@@ -51,8 +51,8 @@ test('a sheet price read as Rp50,000.00 is shown as Rp 50.000', () => {
   assert.match(text, /Galon Kaca 11L x1 Rp 50\.000/);
   assert.doesNotMatch(text, /5\.000\.000/);
   assert.doesNotMatch(text, /Route part|Full route|\*Route map\*/);
-  assert.match(text, /^https:\/\/maps\.google\.com\/\?q=-8\.8291%2C115\.1634$/m);
-  assert.doesNotMatch(text, /%20/);
+  assert.match(text, /^https:\/\/maps\.google\.com\/\?q=-8\.8291\+115\.1634$/m);
+  assert.doesNotMatch(text, /%/);
   assert.doesNotMatch(text, /🆕/);
   assert.match(text, /NEW/);
 });

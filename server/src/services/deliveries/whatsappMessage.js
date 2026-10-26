@@ -1,11 +1,16 @@
 import { driverMapUrl, needsLocationCheck } from './mapsLink.js';
 import { applyListPrices } from './priceList.js';
 
+/** * _ ~ are WhatsApp formatting. A stray one swallows the map link so it cannot be tapped. */
+function waText(value) {
+  return String(value || '').replace(/[*_~]/g, '');
+}
+
 function itemLine(item) {
-  const bits = [item.productName];
+  const bits = [waText(item.productName)];
   if (item.qty != null) bits.push(`x${item.qty}`);
   else if (item.packQty != null) bits.push(`${item.packQty} pack`);
-  if (item.packType) bits.push(`(${item.packType})`);
+  if (item.packType) bits.push(`(${waText(item.packType)})`);
   if (Number.isInteger(item.unitPrice)) bits.push(`Rp ${item.unitPrice.toLocaleString('id-ID')}`);
   return bits.join(' ');
 }
@@ -16,22 +21,22 @@ function itemLine(item) {
 export function buildRouteWhatsAppMessage(route, stops) {
   const dateLabel = route.dateLabel || route.date || '';
   const lines = [];
-  lines.push(`*JAAN Delivery* ${dateLabel}`.trim());
-  lines.push(`Area: *${route.areaName || 'Unassigned'}*`);
-  if (route.vehicleLabel) lines.push(`Armada: ${route.vehicleLabel}`);
-  if (route.driverNames?.length) lines.push(`Driver: ${route.driverNames.join(' & ')}`);
+  lines.push(`*JAAN Delivery* ${waText(dateLabel)}`.trim());
+  lines.push(`Area: *${waText(route.areaName) || 'Unassigned'}*`);
+  if (route.vehicleLabel) lines.push(`Armada: ${waText(route.vehicleLabel)}`);
+  if (route.driverNames?.length) lines.push(`Driver: ${route.driverNames.map(waText).join(' & ')}`);
   lines.push('');
 
   lines.push(`*Stops (${stops.length})*`);
   stops.forEach((stop, i) => {
     const flag = needsLocationCheck(stop) ? ' ⚠️ CEK LOKASI' : '';
     const priority = stop.isNewCustomer || stop.isPriority ? ' NEW' : '';
-    lines.push(`${i + 1}. *${stop.customerName}*${priority}${flag}`);
+    lines.push(`${i + 1}. *${waText(stop.customerName)}*${priority}${flag}`);
     for (const item of applyListPrices(stop.plannedItems, route?.areaName)) {
       lines.push(`   - ${itemLine(item)}`);
     }
     if (stop.note) {
-      const note = String(stop.note).replace(/\s+/g, ' ').trim().slice(0, 120);
+      const note = waText(stop.note).replace(/\s+/g, ' ').trim().slice(0, 120);
       lines.push(`   Note: ${note}`);
     }
     const url = driverMapUrl(stop);

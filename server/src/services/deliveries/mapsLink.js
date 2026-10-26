@@ -1,4 +1,4 @@
-import { coordsFromMapsUrl } from './locationResolver.js';
+import { coordsFromMapsUrl, parsePlusCode } from './locationResolver.js';
 
 /** Build keyless Google Maps URLs from stop data. */
 
@@ -32,20 +32,37 @@ function roundCoord(value) {
 }
 
 function coordLink(lat, lng) {
-  // %2C keeps the pin one link. A raw comma is where WhatsApp stops the tap.
-  return `https://maps.google.com/?q=${roundCoord(lat)}%2C${roundCoord(lng)}`;
+  // WhatsApp ends a tap at % or a comma. Google reads lat+lng as the pin.
+  return `https://maps.google.com/?q=${roundCoord(lat)}+${roundCoord(lng)}`;
 }
 
-/** One word at a time, joined with +. The full address stays in the link, and WhatsApp can open it. */
+/** True when the whole string stays one WhatsApp link. % , and format marks break the tap. */
+function isTappable(url) {
+  return /^https?:\/\/\S+$/i.test(url) && !/[%*,_~\s]/.test(url);
+}
+
+/**
+ * Full address, one word at a time, joined with +.
+ * Only letters, numbers, dots and hyphens — encodeURIComponent would insert % and WhatsApp would not open it.
+ */
 function plusQuery(text) {
   const cleaned = String(text || '')
     .replace(/[\r\n]+/g, ' ')
-    .replace(/[,;]+/g, ' ')
+    .replace(/&/g, ' and ')
+    .replace(/[^A-Za-z0-9.\s-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (!cleaned) return '';
-  const query = cleaned.split(' ').map((word) => encodeURIComponent(word)).join('+');
-  return `https://maps.google.com/?q=${query}`;
+  const query = cleaned.split(' ').filter(Boolean).join('+');
+  return query ? `https://maps.google.com/?q=${query}` : '';
+}
+
+function pinFromPlusCode(stop) {
+  const loc = stop.location || {};
+  const blob = [loc.plusCode, loc.placeName, loc.address].filter(Boolean).join(' ');
+  const parsed = parsePlusCode(blob);
+  if (!parsed || !Number.isFinite(parsed.lat) || !Number.isFinite(parsed.lng)) return '';
+  return coordLink(parsed.lat, parsed.lng);
 }
 
 function addressQuery(stop) {
@@ -88,7 +105,7 @@ export function driverMapUrl(stop) {
   if (raw && !generated && /^https?:\/\//i.test(raw) && !/\s/.test(raw)) {
     const fromPaste = coordsFromMapsUrl(raw);
     if (fromPaste) return coordLink(fromPaste.lat, fromPaste.lng);
-    if (!/%20/i.test(raw)) return raw;
+    if (isTappable(raw)) return raw;
   }
 
   if (Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) {
@@ -100,6 +117,9 @@ export function driverMapUrl(stop) {
   const decoded = textFromGeneratedUrl(raw);
   const decodedCoords = decoded.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/);
   if (decodedCoords) return coordLink(decodedCoords[1], decodedCoords[2]);
+
+  const fromCode = pinFromPlusCode(stop);
+  if (fromCode) return fromCode;
 
   const fromAddress = addressQuery(stop);
   if (fromAddress) return fromAddress;
