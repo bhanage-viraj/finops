@@ -22,6 +22,7 @@ import {
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 import LocationMap from './LocationMap.jsx';
+import SpeedCharts from './SpeedCharts.jsx';
 
 function mapsUrl(stop) {
   const loc = stop.location || {};
@@ -29,17 +30,24 @@ function mapsUrl(stop) {
   const raw = String(loc.mapsUrl || '').trim();
   const short = raw.match(/https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps)\/[\w-]+/i);
   if (short) return short[0];
-  if (/^https:\/\/maps\.google\.com\/\?q=/i.test(raw) && !/\s/.test(raw)) return raw;
+  if (/^https:\/\/maps\.google\.com\/\?q=/i.test(raw) && !/[%\s,]/.test(raw)) return raw;
   if (loc.lat != null && loc.lng != null && Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng))) {
     const lat = Math.round(Number(loc.lat) * 1e6) / 1e6;
     const lng = Math.round(Number(loc.lng) * 1e6) / 1e6;
-    return `https://maps.google.com/?q=${lat}%2C${lng}`;
+    return `https://maps.google.com/?q=${lat}+${lng}`;
   }
-  if (raw && !/%20/i.test(raw) && !/\s/.test(raw)) return raw;
+  if (raw && !/[%\s,*]/.test(raw)) return raw;
   const text = [loc.placeName, loc.address].filter(Boolean).join(' ');
   if (!text) return '';
-  const query = text.replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim().split(' ').map(encodeURIComponent).join('+');
-  return `https://maps.google.com/?q=${query}`;
+  const query = text
+    .replace(/&/g, ' and ')
+    .replace(/[^A-Za-z0-9.\s-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .join('+');
+  return query ? `https://maps.google.com/?q=${query}` : '';
 }
 
 function cargoLabel(totals) {
@@ -460,6 +468,8 @@ export default function DayDetail() {
 
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
+
+      <SpeedCharts dayId={dayId} />
 
       {picked.size > 0 && (
         <section className="card delivery-move">

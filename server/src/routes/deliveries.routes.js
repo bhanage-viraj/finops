@@ -29,6 +29,8 @@ import {
   sendCartrack,
   syncCartrack,
   gpsSuggestions,
+  daySpeed,
+  fleetSpeed,
   linkVehicles,
   uploadNota,
   confirmNotaCtrl,
@@ -57,6 +59,7 @@ export function createDeliveriesRouter(env) {
   router.post('/import-history', ops, upload, importHistory());
   // Read-only Cartrack: link ids + status sync. Job create stays blocked in the client.
   router.post('/cartrack/link-vehicles', admin, linkVehicles(env));
+  router.get('/speed', ops, fleetSpeed(env));
 
   router.get('/:dayId', ops, detail());
   router.delete('/:dayId', ops, removeDay(env));
@@ -71,6 +74,7 @@ export function createDeliveriesRouter(env) {
   router.post('/:dayId/maps/delete', ops, removeStopMaps());
   router.post('/:dayId/cartrack/sync', ops, syncCartrack(env));
   router.get('/:dayId/cartrack/gps-suggestions', ops, gpsSuggestions(env));
+  router.get('/:dayId/speed', ops, daySpeed(env));
 
   router.patch('/stops/:stopId', ops, patchStop());
   router.patch('/stops/:stopId/location', ops, setLocation());

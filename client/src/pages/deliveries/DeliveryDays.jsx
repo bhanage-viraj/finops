@@ -9,6 +9,7 @@ import {
   downloadDayExport,
 } from '../../api/deliveries.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
+import SpeedCharts from './SpeedCharts.jsx';
 
 function displayDate(iso) {
   const [year, month, day] = String(iso || '').split('-');
@@ -144,6 +145,8 @@ export default function DeliveryDays() {
 
       {error && <p className="message message-bad">{error}</p>}
       {message && <p className="message message-ok">{message}</p>}
+
+      <SpeedCharts />
 
       <section className="card sheet-upload">
         <h2>Google Sheet</h2>

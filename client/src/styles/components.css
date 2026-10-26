@@ -1113,3 +1113,39 @@ label.btn.is-disabled {
   padding: 0 var(--space-3);
   background: var(--surface);
 }
+
+.speed-section { margin: 0 0 var(--space-5); }
+.speed-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.speed-head h2 { margin: 0; font-weight: 700; }
+.speed-head .hint { margin: 4px 0 0; }
+.speed-grid { display: grid; gap: var(--space-4); }
+.speed-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.speed-card-head .badge { flex: none; }
+.speed-plate {
+  margin: 0;
+  font-size: var(--text-section);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.speed-plot { width: 100%; min-height: 228px; }
+.speed-plot.is-empty { min-height: 0; }
+.speed-chart { display: block; width: 100%; height: 228px; }
+.speed-bursts { margin: var(--space-2) 0 0; }
+
+@media (max-width: 700px) {
+  .speed-head { flex-direction: column; }
+  .speed-head .btn { width: auto; align-self: flex-start; }
+}

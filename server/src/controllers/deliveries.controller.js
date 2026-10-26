@@ -37,6 +37,7 @@ import {
   suggestArrivalsFromGps,
   linkVehiclesFromCartrack,
 } from '../services/deliveries/cartrackSync.js';
+import { speedForDay, speedForFleet } from '../services/deliveries/speedTrace.js';
 import { attachNotaToStop, confirmNota, emptiesBalance } from '../services/deliveries/notaReader.js';
 import DeliveryStop from '../models/DeliveryStop.js';
 import { createFileStorage } from '../services/storage/fileStorage.js';
@@ -255,6 +256,23 @@ export function syncCartrack(env) {
 export function gpsSuggestions(env) {
   return asyncHandler(async (req, res) => {
     res.json(await suggestArrivalsFromGps(req.params.dayId, env));
+  });
+}
+
+export function daySpeed(env) {
+  return asyncHandler(async (req, res) => {
+    res.json(await speedForDay(req.params.dayId, env));
+  });
+}
+
+export function fleetSpeed(env) {
+  return asyncHandler(async (req, res) => {
+    const date = String(req.query.date || '').trim();
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      res.status(400).json({ error: 'Date must be YYYY-MM-DD.' });
+      return;
+    }
+    res.json(await speedForFleet(env, { date: date || undefined }));
   });
 }
 

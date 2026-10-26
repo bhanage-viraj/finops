@@ -38,6 +38,26 @@ test('cartrack client sends basic auth and parses JSON', async () => {
   assert.ok(calls[0].opts.headers.Authorization.startsWith('Basic '));
 });
 
+test('cartrack client reads speed events with a GET', async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, opts });
+    return { ok: true, status: 200, text: async () => JSON.stringify({ data: [], meta: { last_page: 1 } }) };
+  };
+  const client = createCartrackClient({
+    cartrack: { baseUrl: 'https://fleetapi-id.cartrack.com/rest', username: 'user', apiKey: 'secret' },
+  }, { fetchImpl });
+  await client.vehicleEvents('DK 8157 HJ', {
+    start_timestamp: '2026-10-26 05:00:00',
+    end_timestamp: '2026-10-26 09:00:00',
+    'filter[terminal_event_type_id]': 2,
+    limit: 1000,
+  });
+  assert.match(calls[0].url, /\/vehicles\/DK%208157%20HJ\/events/);
+  assert.match(calls[0].url, /filter(%5B|\[)terminal_event_type_id(%5D|\])=2/);
+  assert.equal(calls[0].opts.method, 'GET');
+});
+
 test('cartrack client hard-blocks writes even when credentials exist', async () => {
   let called = false;
   const fetchImpl = async () => {

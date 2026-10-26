@@ -117,6 +117,14 @@ export function fetchGpsSuggestions(dayId) {
   return api(`/deliveries/${dayId}/cartrack/gps-suggestions`);
 }
 
+export function fetchDaySpeed(dayId) {
+  return api(`/deliveries/${dayId}/speed`);
+}
+
+export function fetchFleetSpeed() {
+  return api('/deliveries/speed');
+}
+
 export async function uploadNota(stopId, file, confirm = false) {
   const body = new FormData();
   body.append('file', file);

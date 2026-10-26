@@ -58,8 +58,14 @@ export function createCartrackClient(env, { fetchImpl = fetch } = {}) {
   return {
     configured,
     readOnly: true,
-    listVehicles: () => request('GET', '/vehicles'),
-    vehiclesStatus: () => request('GET', '/vehicles/status'),
+    listVehicles: (query) => request('GET', '/vehicles', { query }),
+    vehiclesStatus: (query) => request('GET', '/vehicles/status', { query }),
+    // Periodic GPS events include speed (km/h). Read-only.
+    vehicleEvents: (registration, query) => request(
+      'GET',
+      `/vehicles/${encodeURIComponent(String(registration || '').trim())}/events`,
+      { query },
+    ),
     listDeliveryDrivers: (query) => request('GET', '/delivery/drivers', { query }),
     listJobs: (query) => request('GET', '/delivery/jobs', { query }),
     getJob: (jobId) => request('GET', `/delivery/jobs/${jobId}`),
