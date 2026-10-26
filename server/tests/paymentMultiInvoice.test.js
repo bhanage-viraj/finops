@@ -5,7 +5,7 @@ import { clearZohoTokenCache, createCustomerPayment } from '../src/integrations/
 import { allocateOldestFirst, findExactSet } from '../src/services/matching/allocate.js';
 import { matchPayment } from '../src/services/matching/matcher.js';
 import { resolveDateRange } from '../src/services/payments/captionHints.js';
-import { splitOver } from '../src/services/payments/paymentService.js';
+import { applyCorrectedAmount, splitOver } from '../src/services/payments/paymentService.js';
 
 function noDuplicates(t) {
   const original = BankPayment.find;
@@ -178,6 +178,56 @@ test('recording splits ticked invoices: full total pays all, a short total stays
   const typed = splitOver({ ai: { amount: 1 }, confirmed: { amount: 9441300 } }, rows);
   assert.equal(typed.bankFee, 0);
   assert.equal(typed.matchType, 'over');
+});
+
+test('a corrected transfer amount keeps the screenshot reading and resplits the chosen invoices', () => {
+  const rows = fishMarketInvoices().slice(2, 5);
+  const payment = {
+    ai: { amount: 9441300, adminFee: 2500, total: 9441300 },
+    confirmed: { amount: 4000000 },
+    bankFee: 2500,
+    status: 'verified',
+    statementVerified: true,
+    zohoInvoiceId: '2003',
+    matchReasons: ['Old match.'],
+    allocations: rows.map((row) => ({
+      invoiceId: row.invoiceId,
+      invoiceNumber: row.invoiceNo,
+      remaining: row.remaining,
+      applied: row.remaining,
+      date: row.date,
+      dueDate: row.dueDate,
+      customerId: 'c-fish',
+      customerName: 'Contoh Fish Market',
+    })),
+  };
+
+  assert.equal(applyCorrectedAmount(payment), true);
+  assert.equal(payment.ai.amount, 9441300);
+  assert.equal(payment.ai.adminFee, 2500);
+  assert.equal(payment.ai.total, 9441300);
+  assert.equal(payment.confirmed.amount, 4000000);
+  assert.equal(payment.bankFee, 0);
+  assert.equal(payment.matchType, 'partial');
+  assert.equal(payment.status, 'verified');
+  const applied = payment.allocations.reduce((sum, row) => sum + row.applied, 0);
+  assert.equal(applied, 4000000);
+  assert.equal(payment.matchReasons[0].replace(/\D/g, ''), '4000000');
+  assert.equal(payment.matchReasons[1], 'Old match.');
+
+  payment.confirmed.amount = null;
+  assert.equal(applyCorrectedAmount(payment), true);
+  assert.equal(payment.ai.amount, 9441300);
+  assert.equal(payment.bankFee, 2500);
+  assert.equal(payment.matchType, 'exact');
+  const restored = payment.allocations.reduce((sum, row) => sum + row.applied, 0);
+  assert.equal(restored, 9438800);
+  assert.match(payment.matchReasons[0], /^Amount set back/);
+
+  const empty = { ai: { amount: 1000 }, confirmed: { amount: 2000 }, allocations: [] };
+  assert.equal(applyCorrectedAmount(empty), false);
+  assert.equal(empty.ai.amount, 1000);
+  assert.equal(empty.confirmed.amount, 2000);
 });
 
 test('one Zoho customer payment carries every invoice line and refuses bad totals', async () => {

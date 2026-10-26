@@ -7,11 +7,12 @@ import {
   fetchPayment,
   fetchPaymentFile,
   matchPayment,
+  updatePaymentHints,
   verifyPayment,
 } from '../../api/payments.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
-import { formatRupiah } from '../../utils/formatRupiah.js';
+import { formatAmountInput, formatRupiah, parseRupiahInput } from '../../utils/formatRupiah.js';
 
 // Same limit the server uses to treat a small surplus as the sender's bank fee.
 const MAX_BANK_FEE = 6500;
@@ -159,6 +160,9 @@ export default function PaymentDetail() {
   const [customerInvoices, setCustomerInvoices] = useState([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [ticked, setTicked] = useState(() => new Set());
+  const [editingAmount, setEditingAmount] = useState(false);
+  const [amountDraft, setAmountDraft] = useState('');
+  const [recording, setRecording] = useState(false);
 
   async function load({ withFile = true } = {}) {
     const body = await fetchPayment(id);
@@ -187,6 +191,8 @@ export default function PaymentDetail() {
     setDateMode('all');
     setFrom('');
     setTo('');
+    setEditingAmount(false);
+    setAmountDraft('');
   }, [id]);
 
   useEffect(() => {
@@ -373,6 +379,37 @@ export default function PaymentDetail() {
     }
   }
 
+  function startAmountEdit() {
+    const current = payment?.amountReceived ?? payment?.ai?.amount;
+    setAmountDraft(formatAmountInput(current));
+    setEditingAmount(true);
+    setError('');
+    setMessage('');
+  }
+
+  async function saveAmount(event) {
+    event.preventDefault();
+    const parsed = parseRupiahInput(amountDraft);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      setError('Enter the amount in whole rupiah, for example 6.700.000.');
+      setMessage('');
+      return;
+    }
+    await run(async () => {
+      await updatePaymentHints(id, { amount: parsed });
+      setEditingAmount(false);
+      setMessage('Transfer amount updated.');
+    });
+  }
+
+  async function useScreenshotAmount() {
+    await run(async () => {
+      await updatePaymentHints(id, { amount: null });
+      setEditingAmount(false);
+      setMessage('Using the amount read from the screenshot.');
+    });
+  }
+
   async function onDelete() {
     if (!window.confirm('Delete this payment and its screenshot? This cannot be undone.')) return;
     setBusy(true);
@@ -407,6 +444,9 @@ export default function PaymentDetail() {
   const canDelete = !reading && !payment.zohoPaymentId && !(payment.zohoPayments || []).length;
   const amount = payment.amountReceived ?? payment.ai?.amount;
   const hasAmount = amount != null;
+  const canEditAmount = canReview && !['approved', 'rejected'].includes(payment.status);
+  const amountCorrected = Number.isInteger(payment.confirmed?.amount);
+  const screenshotAmount = Number.isInteger(payment.ai?.amount) ? payment.ai.amount : null;
   const adminFee = payment.ai?.adminFee || payment.bankFee || 0;
   const allocations = payment.allocations || [];
   const appliedById = new Map(allocations.map((row) => [String(row.invoiceId), row.applied]));
@@ -567,8 +607,57 @@ export default function PaymentDetail() {
             )}
             <div>
               <dt>Received</dt>
-              <dd className={!hasAmount && reading ? 'payment-pulse-text' : undefined}>
-                {hasAmount ? formatRupiah(amount) : (reading ? 'Reading…' : '—')}
+              <dd className={!hasAmount && reading && !editingAmount ? 'payment-pulse-text' : undefined}>
+                {editingAmount ? (
+                  <form className="payment-amount-edit" onSubmit={saveAmount}>
+                    <label>
+                      <span className="hint">Customer transfer amount</span>
+                      <input
+                        value={amountDraft}
+                        onChange={(event) => setAmountDraft(event.target.value)}
+                        inputMode="decimal"
+                        autoComplete="off"
+                        autoFocus
+                        aria-label="Customer transfer amount"
+                        placeholder="6.700.000"
+                        disabled={busy}
+                      />
+                    </label>
+                    <p className="hint">
+                      Whole rupiah. This amount is matched and recorded. Leave out the sender&apos;s bank fee. The screenshot reading is kept.
+                    </p>
+                    <div className="payment-amount-actions">
+                      <button type="submit" className="btn btn-primary" disabled={busy}>
+                        {busy ? 'Saving…' : 'Save amount'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        disabled={busy}
+                        onClick={() => setEditingAmount(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="payment-amount-shown">
+                    <span>{hasAmount ? formatRupiah(amount) : (reading ? 'Reading…' : '—')}</span>
+                    {canEditAmount && (
+                      <button type="button" className="btn btn-secondary" disabled={busy} onClick={startAmountEdit}>
+                        {hasAmount ? 'Edit amount' : 'Enter amount'}
+                      </button>
+                    )}
+                    {canEditAmount && amountCorrected && screenshotAmount != null && (
+                      <button type="button" className="btn btn-secondary" disabled={busy} onClick={useScreenshotAmount}>
+                        Use screenshot amount
+                      </button>
+                    )}
+                  </div>
+                )}
+                {!editingAmount && amountCorrected && screenshotAmount != null && screenshotAmount !== amount && (
+                  <p className="hint payment-amount-note">Screenshot read {formatRupiah(screenshotAmount)}.</p>
+                )}
               </dd>
             </div>
             {adminFee > 0 && (
@@ -583,7 +672,12 @@ export default function PaymentDetail() {
             {payment.ai?.total != null && payment.ai.total !== amount && (
               <div>
                 <dt>Total transfer</dt>
-                <dd>{formatRupiah(payment.ai.total)}</dd>
+                <dd>
+                  {formatRupiah(payment.ai.total)}
+                  {canEditAmount && (
+                    <span className="hint"> · screenshot reading. Edit the received amount if this is wrong.</span>
+                  )}
+                </dd>
               </div>
             )}
             <div>
@@ -840,19 +934,22 @@ export default function PaymentDetail() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={busy || !payment.matchedInvoiceId || !hasAmount || (!tickChanged && multiVillaExcess)}
-                onClick={() => run(async () => {
-                  if (!payment.matchedInvoiceId) throw new Error('Pick a customer first.');
-                  if (!hasAmount) throw new Error('Wait for the amount to finish reading.');
-                  if (!payment.statementVerified) await verifyPayment(id);
-                  await approvePayment(id, {});
-                  const villas = new Set((payment.allocations || []).map((row) => row.customerId).filter(Boolean)).size;
-                  setMessage(villas > 1
-                    ? `Recorded in Zoho as ${villas} Bank Transfers, one per villa.`
-                    : 'Recorded in Zoho as Bank Transfer.');
-                })}
+                disabled={busy || recording || !payment.matchedInvoiceId || !hasAmount || (!tickChanged && multiVillaExcess)}
+                onClick={() => {
+                  setRecording(true);
+                  run(async () => {
+                    if (!payment.matchedInvoiceId) throw new Error('Pick a customer first.');
+                    if (!hasAmount) throw new Error('Wait for the amount to finish reading.');
+                    if (!payment.statementVerified) await verifyPayment(id);
+                    await approvePayment(id, {});
+                    const villas = new Set((payment.allocations || []).map((row) => row.customerId).filter(Boolean)).size;
+                    setMessage(villas > 1
+                      ? `Recorded in Zoho as ${villas} Bank Transfers, one per villa.`
+                      : 'Recorded in Zoho as Bank Transfer.');
+                  }).finally(() => setRecording(false));
+                }}
               >
-                {busy
+                {recording
                   ? 'Recording…'
                   : (hasAmount ? `Record ${formatRupiah(amount)} Bank Transfer in Zoho` : 'Record Bank Transfer in Zoho')}
               </button>

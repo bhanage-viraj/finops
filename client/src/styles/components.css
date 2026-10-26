@@ -469,6 +469,37 @@ a.btn {
 }
 .payment-pending .hint { margin: 0 0 var(--space-2); }
 .payment-name-note { font-weight: 400; grid-column: 1 / -1; }
+.payment-amount-shown {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.payment-amount-shown .btn,
+.payment-amount-actions .btn {
+  width: auto;
+  min-height: 44px;
+}
+.payment-amount-edit {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 360px;
+  font-weight: 400;
+}
+.payment-amount-edit label { display: grid; gap: var(--space-1); }
+.payment-amount-edit input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+}
+.payment-amount-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.payment-amount-note { font-weight: 400; margin: var(--space-1) 0 0; }
 .payment-match-note { margin: var(--space-3) 0 0; }
 .payment-invoice-pick { margin-top: var(--space-3); }
 .payment-invoice-pick .name-suggest-list { max-height: 320px; }
@@ -1122,7 +1153,7 @@ label.btn.is-disabled {
   gap: var(--space-3);
   margin-bottom: var(--space-3);
 }
-.speed-head h2 { margin: 0; font-weight: 700; }
+.speed-head h1 { margin: 0; font-weight: 700; }
 .speed-head .hint { margin: 4px 0 0; }
 .speed-grid { display: grid; gap: var(--space-4); }
 .speed-card-head {

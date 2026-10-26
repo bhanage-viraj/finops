@@ -112,6 +112,35 @@ export function splitOver(payment, rows) {
   return { allocations, bankFee, matchType };
 }
 
+/**
+ * Re-split invoices already chosen, using the person's amount when they set one.
+ * Leaves payment.ai untouched. Returns false when nothing is chosen yet.
+ */
+export function applyCorrectedAmount(payment) {
+  const rows = allocationRows(payment);
+  if (!rows.length) return false;
+  const split = splitOver(payment, rows);
+  storeAllocations(payment, split.allocations);
+  payment.bankFee = split.bankFee;
+  payment.matchType = split.matchType;
+  const typed = humanAmount(payment);
+  const note = typed == null
+    ? 'Amount set back to the screenshot reading.'
+    : `Amount corrected to Rp ${typed.toLocaleString('id-ID')}.`;
+  const prior = (payment.matchReasons || []).filter((line) => (
+    !String(line).startsWith('Amount corrected')
+    && !String(line).startsWith('Amount set back')
+  ));
+  payment.matchReasons = [note, ...prior].slice(0, 8);
+  if (
+    payment.zohoInvoiceId
+    && !['uploaded', 'processing', 'approved', 'rejected', 'failed'].includes(payment.status)
+  ) {
+    payment.status = payment.statementVerified ? 'verified' : 'matched';
+  }
+  return true;
+}
+
 /** Extra on a transfer can stay as Zoho credit for one customer only. */
 export const MULTI_CUSTOMER_EXCESS = 'This transfer is more than the ticked invoices. Extra can stay as credit for one villa only — tick more invoices, or clear the other villas.';
 
@@ -860,6 +889,7 @@ export async function updatePaymentHints(id, user, body = {}, env) {
   const hints = parseHintsFromBody(body);
   const caption = splitCaption(body.customerName);
   if (!payment.confirmed) payment.confirmed = {};
+  const previousAmount = payment.confirmed.amount ?? null;
   if (body.customerName !== undefined) payment.confirmed.customerName = hints.customerName;
   if (body.siteNote !== undefined || caption.dateText) payment.confirmed.siteNote = hints.siteNote;
   if (body.invoiceHint !== undefined || body.invoiceNumberHint !== undefined || caption.invoiceNo) {
@@ -869,9 +899,18 @@ export async function updatePaymentHints(id, user, body = {}, env) {
   if (body.paidAt !== undefined) payment.confirmed.paidAt = hints.paidAt;
 
   // While AI is still reading, only save the caption — rematch after amount exists.
+  // An amount correction keeps the invoices already chosen and only resplits them.
   const stillReading = ['uploaded', 'processing'].includes(payment.status);
+  const amountOnly = body.amount !== undefined
+    && body.customerName === undefined
+    && body.siteNote === undefined
+    && body.invoiceHint === undefined
+    && body.invoiceNumberHint === undefined
+    && body.paidAt === undefined;
+  let resplit = false;
   if (!stillReading) {
-    await rematchPaymentDoc(payment, env);
+    resplit = amountOnly && applyCorrectedAmount(payment);
+    if (!resplit) await rematchPaymentDoc(payment, env);
   }
   await payment.save();
   await writeAudit({
@@ -879,6 +918,10 @@ export async function updatePaymentHints(id, user, body = {}, env) {
     action: 'match',
     entity: 'bankPayments',
     entityId: payment._id,
+    before: body.amount !== undefined ? {
+      amount: previousAmount,
+      aiAmount: payment.ai?.amount ?? null,
+    } : null,
     after: {
       customerName: payment.confirmed.customerName,
       invoiceHint: payment.confirmed.invoiceHint,
@@ -886,7 +929,9 @@ export async function updatePaymentHints(id, user, body = {}, env) {
       paidAt: payment.confirmed.paidAt,
       zohoInvoiceId: payment.zohoInvoiceId,
       matchConfidence: payment.matchConfidence,
+      bankFee: payment.bankFee || 0,
       deferredRematch: stillReading,
+      resplit,
     },
   });
   return serializePayment(payment);
