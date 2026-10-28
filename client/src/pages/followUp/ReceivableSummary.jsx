@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchFollowUpCustomers, fetchReceivableSummaryPdf } from '../../api/followUp.js';
 import { formatRupiah } from '../../utils/formatRupiah.js';
+import { PDF_TAB, WHATSAPP_TAB, clipboardPlan, whatsappOpener } from './whatsappTab.js';
 
 const STATUS_OPTIONS = [
   { id: 'overdue', label: 'Overdue' },
@@ -12,13 +13,6 @@ function displayDate(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return iso || '—';
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
-}
-
-function whatsappUrl(phone, text) {
-  const digits = String(phone || '').replace(/\D/g, '');
-  const q = encodeURIComponent(text || '');
-  if (digits) return `https://web.whatsapp.com/send?phone=${digits}&text=${q}`;
-  return `https://web.whatsapp.com/send?text=${q}`;
 }
 
 function monthBounds(date = new Date()) {
@@ -45,7 +39,22 @@ function summaryMessage(total, from, to) {
 }
 
 function noteIsBad(note) {
-  return /failed|could not|more than one|no outstanding|choose a start/i.test(note || '');
+  return /failed|could not|blocked|more than one|no outstanding|choose a start/i.test(note || '');
+}
+
+function summaryShareNote(result, name, copied) {
+  const who = String(name || '').trim() || 'this customer';
+  if (result.status === 'blocked') {
+    return 'The browser blocked WhatsApp. Allow pop-ups and send again. The PDF is downloaded.';
+  }
+  if (result.status === 'same') {
+    if (copied === 'number') {
+      return `Number copied for ${who}. In the WhatsApp tab, paste it into search, open the chat, then paste the message. The PDF is downloaded.`;
+    }
+    return `Message copied for ${who}. Paste it in the WhatsApp tab. The PDF is downloaded.`;
+  }
+  const again = result.first ? ' Further sends stay in that tab.' : '';
+  return `WhatsApp is open for ${who}. The PDF is downloaded. Attach it there.${again}`;
 }
 
 function downloadName(value, fallback) {
@@ -71,6 +80,7 @@ export default function ReceivableSummary() {
   const [statuses, setStatuses] = useState(['overdue']);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
+  const [chatLink, setChatLink] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [previewMeta, setPreviewMeta] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
@@ -192,12 +202,15 @@ export default function ReceivableSummary() {
 
   async function run(send) {
     setNote('');
+    setChatLink('');
     const range = currentRange();
     const error = validateRange(range);
     if (error) {
       setNote(error);
       return;
     }
+    // Reserve the tab during the click. The phone number arrives with the PDF.
+    const begun = send ? whatsappOpener.begin() : null;
     setBusy(true);
     try {
       const file = await loadPdf(range, { preview: false });
@@ -211,14 +224,28 @@ export default function ReceivableSummary() {
         return;
       }
       if (file.customerCount !== 1) {
+        whatsappOpener.cancel(begun);
         setNote(file.customerCount === 0
           ? 'No outstanding balance for that customer in this range.'
           : 'More than one customer matches. Type more of the name so the PDF is for one customer.');
         return;
       }
-      window.open(whatsappUrl(file.phone, summaryMessage(file.total, range.from, range.to)), '_blank', 'noopener,noreferrer');
-      setNote(`PDF downloaded as ${name}. Attach that file in WhatsApp Web after the chat opens.`);
+      const text = summaryMessage(file.total, range.from, range.to);
+      const result = whatsappOpener.finish(begun, file.phone, text);
+      const plan = clipboardPlan(result, file.phone, text);
+      let copied = 'none';
+      try {
+        if (plan.text) {
+          await navigator.clipboard.writeText(plan.text);
+          copied = plan.kind;
+        }
+      } catch {
+        copied = 'none';
+      }
+      setNote(summaryShareNote(result, customer, copied));
+      setChatLink(result.status === 'opened' ? '' : result.url);
     } catch (err) {
+      whatsappOpener.cancel(begun);
       setNote(err.message || 'The summary could not be downloaded.');
     } finally {
       setBusy(false);
@@ -338,7 +365,7 @@ export default function ReceivableSummary() {
                 ? `${previewMeta.invoiceCount.toLocaleString('id-ID')} invoice${previewMeta.invoiceCount === 1 ? '' : 's'} · ${formatRupiah(previewMeta.total)}`
                 : 'PDF preview'}
             </p>
-            <a className="btn btn-secondary" href={previewUrl} target="_blank" rel="noreferrer">
+            <a className="btn btn-secondary" href={previewUrl} target={PDF_TAB} rel="opener">
               Open preview
             </a>
           </div>
@@ -350,6 +377,12 @@ export default function ReceivableSummary() {
         </div>
       )}
       {note && <p className={noteIsBad(note) ? 'message message-bad' : 'hint'}>{note}</p>}
+      {chatLink && (
+        <p className="hint">
+          <a href={chatLink} target={WHATSAPP_TAB} rel="opener">Open WhatsApp</a>
+          {' '}if that tab was closed.
+        </p>
+      )}
     </section>
   );
 }

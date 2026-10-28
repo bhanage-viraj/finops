@@ -1,20 +1,13 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchFollowUpInvoicePdf, fetchFollowUpToday } from '../../api/followUp.js';
 import ReceivableSummary from './ReceivableSummary.jsx';
+import { PDF_TAB, WHATSAPP_TAB, clipboardPlan, whatsappOpener } from './whatsappTab.js';
 import { formatRupiah } from '../../utils/formatRupiah.js';
 
 function displayDate(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return iso || '—';
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
-}
-
-/** WhatsApp Web in the browser — avoids opening the native WhatsApp app. */
-function whatsappUrl(phone, text) {
-  const digits = String(phone || '').replace(/\D/g, '');
-  const q = encodeURIComponent(text || '');
-  if (digits) return `https://web.whatsapp.com/send?phone=${digits}&text=${q}`;
-  return `https://web.whatsapp.com/send?text=${q}`;
 }
 
 function safeFileName(name, fallback) {
@@ -65,7 +58,48 @@ function combinedMessage(rows, text) {
 }
 
 function noteIsBad(note) {
-  return /failed|could not/i.test(note || '');
+  return /failed|could not|blocked/i.test(note || '');
+}
+
+function shareNote(result, name, phone, fileCount, copied) {
+  const who = name || 'this customer';
+  const files = fileCount === 1 ? 'PDF downloaded.' : `${fileCount} PDFs downloaded.`;
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (result.status === 'blocked') {
+    return `The browser blocked WhatsApp. Allow pop-ups and share again. ${files}`;
+  }
+  if (result.status === 'same') {
+    if (copied === 'number') {
+      return `Number copied for ${who}. In the WhatsApp tab, paste it into search, open the chat, then paste the message from the box. ${files}`;
+    }
+    if (copied === 'message') {
+      return `Message copied for ${who}. ${files} Paste it in the WhatsApp tab.`;
+    }
+    return `WhatsApp is already open for ${who}${digits ? ` (${digits})` : ''}. ${files} Copy the message from the box and paste it there.`;
+  }
+  const again = result.first ? ' Further reminders stay in that tab.' : '';
+  const attach = fileCount === 1 ? 'Attach it there.' : 'Attach them there.';
+  return `WhatsApp is open for ${who}. ${files} ${attach}${again}`;
+}
+
+async function writeClipboard(text) {
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ChatLink({ url }) {
+  if (!url) return null;
+  return (
+    <p className="hint">
+      <a href={url} target={WHATSAPP_TAB} rel="opener">Open WhatsApp</a>
+      {' '}if that tab was closed.
+    </p>
+  );
 }
 
 function FollowUpPanel({
@@ -81,6 +115,7 @@ function FollowUpPanel({
   onShareWhatsApp,
   onDownloadPdf,
   onClose,
+  chatLink,
 }) {
   return (
     <div className="followup-panel">
@@ -99,7 +134,7 @@ function FollowUpPanel({
         <div className="title-row followup-preview-head">
           <strong>Invoice</strong>
           {previewUrl && (
-            <a className="btn btn-secondary" href={previewUrl} target="_blank" rel="noreferrer">
+            <a className="btn btn-secondary" href={previewUrl} target={PDF_TAB} rel="opener">
               Open full size
             </a>
           )}
@@ -123,14 +158,15 @@ function FollowUpPanel({
           onChange={(event) => onMessageChange(event.target.value)}
         />
       </label>
-      <p className="hint">Edit if needed, then share. The invoice PDF is attached when your phone allows it.</p>
+      <p className="hint">Edit if needed, then share. WhatsApp opens once and stays in that tab. The PDF downloads so you can attach it.</p>
       {note && <p className={`message ${noteIsBad(note) ? 'message-bad' : 'message-ok'}`}>{note}</p>}
+      <ChatLink url={chatLink} />
       <div className="actions">
         <button type="button" className="btn btn-secondary" onClick={onCopy} disabled={sharing}>Copy text</button>
         <button type="button" className="btn btn-secondary" onClick={onDownloadPdf} disabled={sharing || previewBusy}>
           {sharing ? 'Getting PDF…' : 'Download PDF'}
         </button>
-        <button type="button" className="btn btn-primary" onClick={onShareWhatsApp} disabled={sharing || previewBusy}>
+        <button type="button" className="btn btn-primary" onClick={onShareWhatsApp} disabled={sharing}>
           {sharing ? 'Preparing…' : 'Share on WhatsApp'}
         </button>
       </div>
@@ -150,6 +186,11 @@ function CombinedPanel({
   onDownloadAll,
   onOpenPdf,
   onClose,
+  previewId,
+  previewUrl,
+  previewBusy,
+  previewError,
+  chatLink,
 }) {
   const total = rows.reduce((sum, row) => sum + row.balance, 0);
   return (
@@ -170,11 +211,37 @@ function CombinedPanel({
               {' · due '}{displayDate(row.dueDate)} · {formatRupiah(row.balance)}
             </span>
             <button type="button" className="btn btn-secondary" disabled={sharing} onClick={() => onOpenPdf(row)}>
-              Open PDF
+              {previewId === row.invoiceId && previewBusy
+                ? 'Loading…'
+                : previewId === row.invoiceId && previewUrl
+                  ? 'Hide PDF'
+                  : 'View PDF'}
             </button>
           </li>
         ))}
       </ul>
+
+      {(previewBusy || previewError || previewUrl) && (
+        <div className="followup-preview">
+          <div className="title-row followup-preview-head">
+            <strong>Invoice</strong>
+            {previewUrl && (
+              <a className="btn btn-secondary" href={previewUrl} target={PDF_TAB} rel="opener">
+                Open full size
+              </a>
+            )}
+          </div>
+          {previewBusy && <p className="muted">Loading invoice PDF…</p>}
+          {previewError && <p className="message message-bad">{previewError}</p>}
+          {previewUrl && !previewBusy && (
+            <div className="viewer-scroll followup-preview-frame">
+              <div className="viewer-stage">
+                <iframe title="Invoice preview" src={`${previewUrl}#view=FitH`} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <label className="field">
         <span className="field-label">WhatsApp message</span>
@@ -185,9 +252,10 @@ function CombinedPanel({
         />
       </label>
       <p className="hint">
-        All {rows.length} invoice PDFs are attached when your phone allows it. The message is also copied, so paste it if WhatsApp drops the text.
+        WhatsApp opens once and stays in that tab. The PDFs download so you can attach them.
       </p>
       {note && <p className={`message ${noteIsBad(note) ? 'message-bad' : 'message-ok'}`}>{note}</p>}
+      <ChatLink url={chatLink} />
       <div className="actions">
         <button type="button" className="btn btn-secondary" onClick={onCopy} disabled={sharing}>Copy text</button>
         <button type="button" className="btn btn-secondary" onClick={onDownloadAll} disabled={sharing}>
@@ -244,6 +312,7 @@ export default function FollowUp() {
   const [messageEdited, setMessageEdited] = useState(false);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
+  const [chatLink, setChatLink] = useState('');
   const [busy, setBusy] = useState(true);
   const [sharing, setSharing] = useState(false);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -259,18 +328,30 @@ export default function FollowUp() {
   const [reloadTick, setReloadTick] = useState(0);
   const refreshNext = useRef(false);
   const pdfCache = useRef(new Map());
+  const pdfInflight = useRef(new Map());
   const previewUrlRef = useRef('');
+  const extraUrlRef = useRef('');
+  const extraToken = useRef(0);
+  const [extraPreview, setExtraPreview] = useState({ id: '', url: '', busy: false, error: '' });
 
   const selectedId = openKey.startsWith('inv:') ? openKey.slice(4) : '';
 
   async function loadInvoiceFile(invoice) {
     const cached = pdfCache.current.get(invoice.invoiceId);
     if (cached) return cached;
-    const { blob } = await fetchFollowUpInvoicePdf(invoice.invoiceId);
-    const fileName = safeFileName(`${invoice.invoiceNumber || invoice.invoiceId}.pdf`);
-    const file = new File([blob], fileName, { type: 'application/pdf' });
-    pdfCache.current.set(invoice.invoiceId, file);
-    return file;
+    const pending = pdfInflight.current.get(invoice.invoiceId);
+    if (pending) return pending;
+    const task = (async () => {
+      const { blob } = await fetchFollowUpInvoicePdf(invoice.invoiceId);
+      const fileName = safeFileName(`${invoice.invoiceNumber || invoice.invoiceId}.pdf`);
+      const file = new File([blob], fileName, { type: 'application/pdf' });
+      pdfCache.current.set(invoice.invoiceId, file);
+      return file;
+    })().finally(() => {
+      pdfInflight.current.delete(invoice.invoiceId);
+    });
+    pdfInflight.current.set(invoice.invoiceId, task);
+    return task;
   }
 
   /** A few PDFs at a time so Zoho is not hit with a burst. */
@@ -342,7 +423,9 @@ export default function FollowUp() {
   }
 
   useEffect(() => () => {
+    extraToken.current += 1;
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    if (extraUrlRef.current) URL.revokeObjectURL(extraUrlRef.current);
   }, []);
 
   useEffect(() => {
@@ -407,12 +490,21 @@ export default function FollowUp() {
     if (selectedId && !filtered.some((item) => item.invoiceId === selectedId)) closePanel();
   }, [filtered, selectedId]);
 
+  function clearExtraPreview() {
+    extraToken.current += 1;
+    if (extraUrlRef.current) URL.revokeObjectURL(extraUrlRef.current);
+    extraUrlRef.current = '';
+    setExtraPreview({ id: '', url: '', busy: false, error: '' });
+  }
+
   function closePanel() {
     setOpenKey('');
     setOpenIds([]);
     setMessage('');
     setMessageEdited(false);
     setNote('');
+    setChatLink('');
+    clearExtraPreview();
   }
 
   function pick(invoice) {
@@ -425,6 +517,8 @@ export default function FollowUp() {
     setMessage(invoice.messageDraft || '');
     setMessageEdited(false);
     setNote('');
+    setChatLink('');
+    clearExtraPreview();
   }
 
   function openCombined(group, rows) {
@@ -435,6 +529,8 @@ export default function FollowUp() {
     setMessage(isFull ? group.fullMessageDraft : combinedMessage(rows, reminderText));
     setMessageEdited(false);
     setNote('');
+    setChatLink('');
+    clearExtraPreview();
   }
 
   function togglePick(invoiceId) {
@@ -470,6 +566,15 @@ export default function FollowUp() {
     setOpenIds(ids);
     setMessage(combinedMessage(ticked, reminderText));
   }, [picked]);
+
+  // Start the PDFs while the reminder is open, so Share does not wait on Zoho.
+  useEffect(() => {
+    if (!openKey.startsWith('cust:') || openIds.length === 0) return undefined;
+    const rows = openIds.map((invoiceId) => byId.get(invoiceId)).filter(Boolean);
+    if (!rows.length) return undefined;
+    loadInvoiceFiles(rows).catch(() => {});
+    return undefined;
+  }, [openKey, openIds, byId]);
 
   function editMessage(value) {
     setMessage(value);
@@ -510,28 +615,33 @@ export default function FollowUp() {
     }
   }
 
-  async function shareFiles(files, phone) {
-    // Always WhatsApp Web — navigator.share opens the native app on many machines.
-    files.forEach(triggerDownload);
-    window.open(whatsappUrl(phone, message), '_blank', 'noopener,noreferrer');
-    return files.length > 1
-      ? `${files.length} PDFs downloaded. Attach them in WhatsApp Web after the chat opens.`
-      : 'PDF downloaded. Attach that file in WhatsApp Web after the chat opens.';
+  async function rememberShare(result, phone, fileCount) {
+    const plan = clipboardPlan(result, phone, message);
+    const shouldCopy = result.status === 'same' || fileCount > 1;
+    const copied = shouldCopy && await writeClipboard(plan.text) ? plan.kind : 'none';
+    setChatLink(result.status === 'opened' ? '' : result.url);
+    return copied;
   }
 
   async function shareOnWhatsApp() {
     if (!selected) return;
     setNote('');
+    setChatLink('');
     setSharing(true);
+    // Open during the click, before the PDF request, so the tab starts immediately.
+    const result = whatsappOpener.open(selected.customerPhone, message);
     try {
+      const copied = await rememberShare(result, selected.customerPhone, 1);
       const file = await loadInvoiceFile(selected);
-      setNote(await shareFiles([file], selected.customerPhone));
+      triggerDownload(file);
+      setNote(shareNote(result, selected.customerName, selected.customerPhone, 1, copied));
     } catch (err) {
       if (err?.name === 'AbortError') {
         setNote('');
         return;
       }
-      setNote(err.message || 'Share failed.');
+      const opened = result.status === 'opened' ? ' WhatsApp is already open.' : '';
+      setNote(`${err.message || 'Share failed.'}${opened}`);
     } finally {
       setSharing(false);
     }
@@ -540,18 +650,21 @@ export default function FollowUp() {
   async function shareCombined() {
     if (!openCustomer || !openRows.length) return;
     setNote('');
+    setChatLink('');
     setSharing(true);
-    // Some phones drop the text when several files are shared; keep it on the clipboard.
-    navigator.clipboard?.writeText(message).catch(() => {});
+    const result = whatsappOpener.open(openCustomer.customerPhone, message);
     try {
+      const copied = await rememberShare(result, openCustomer.customerPhone, openRows.length);
       const files = await loadInvoiceFiles(openRows);
-      setNote(await shareFiles(files, openCustomer.customerPhone));
+      files.forEach(triggerDownload);
+      setNote(shareNote(result, openCustomer.customerName, openCustomer.customerPhone, files.length, copied));
     } catch (err) {
       if (err?.name === 'AbortError') {
         setNote('');
         return;
       }
-      setNote(err.message || 'Share failed.');
+      const opened = result.status === 'opened' ? ' WhatsApp is already open.' : '';
+      setNote(`${err.message || 'Share failed.'}${opened}`);
     } finally {
       setSharing(false);
     }
@@ -574,17 +687,28 @@ export default function FollowUp() {
 
   async function openPdf(row) {
     setNote('');
-    // Open the tab first so the browser does not block it as a pop-up.
-    const tab = window.open('', '_blank');
+    if (extraPreview.id === row.invoiceId && (extraPreview.url || extraPreview.busy)) {
+      clearExtraPreview();
+      return;
+    }
+    const token = extraToken.current + 1;
+    extraToken.current = token;
+    setExtraPreview({ id: row.invoiceId, url: '', busy: true, error: '' });
     try {
       const file = await loadInvoiceFile(row);
+      if (token !== extraToken.current) return;
+      if (extraUrlRef.current) URL.revokeObjectURL(extraUrlRef.current);
       const url = URL.createObjectURL(file);
-      if (tab) tab.location.href = url;
-      else window.open(url, '_blank', 'noopener,noreferrer');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      extraUrlRef.current = url;
+      setExtraPreview({ id: row.invoiceId, url, busy: false, error: '' });
     } catch (err) {
-      tab?.close();
-      setNote(err.message || 'Download failed.');
+      if (token !== extraToken.current) return;
+      setExtraPreview({
+        id: row.invoiceId,
+        url: '',
+        busy: false,
+        error: err.message || 'Invoice preview could not be loaded.',
+      });
     }
   }
 
@@ -600,6 +724,7 @@ export default function FollowUp() {
     onShareWhatsApp: shareOnWhatsApp,
     onDownloadPdf: downloadPdf,
     onClose: closePanel,
+    chatLink,
   };
 
   const combinedProps = {
@@ -612,6 +737,11 @@ export default function FollowUp() {
     onDownloadAll: downloadCombined,
     onOpenPdf: openPdf,
     onClose: closePanel,
+    previewId: extraPreview.id,
+    previewUrl: extraPreview.url,
+    previewBusy: extraPreview.busy,
+    previewError: extraPreview.error,
+    chatLink,
   };
 
   function invoiceRow(invoice, { withPick }) {
