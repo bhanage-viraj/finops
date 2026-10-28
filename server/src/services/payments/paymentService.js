@@ -13,7 +13,7 @@ import {
 import { compactName, nameSimilarity, nameTokens, normalizeName } from '../matching/normalizeName.js';
 import { WEAK_NAME } from '../matching/rules.js';
 import { createFileStorage, extensionFor } from '../storage/fileStorage.js';
-import { displayFileName, inspectUpload, prepareStoredBytes } from '../documents/uploads.js';
+import { displayFileName, inspectUpload, pdfPageCount, prepareStoredBytes } from '../documents/uploads.js';
 import { httpError } from '../../utils/http.js';
 import { parsePaymentAmount, parsePaymentDate } from '../ai/schemas.js';
 import { parseDate } from '../documents/numbers.js';
@@ -21,6 +21,20 @@ import { resolveDateRange, splitCaption } from './captionHints.js';
 
 function canReview(user) {
   return user.role === 'accountant' || user.role === 'admin';
+}
+
+/** A transfer receipt PDF is short. Longer files are statements, not one proof. */
+const MAX_PAYMENT_PDF_PAGES = 10;
+
+/** Empty string when the file can be stored. inspectUpload already checked the bytes. */
+export function paymentUploadBlock(inspected, bytes) {
+  if (!inspected?.ok) return inspected?.error || 'This file could not be read.';
+  if (inspected.mime !== 'application/pdf') return '';
+  const pages = pdfPageCount(bytes);
+  if (pages != null && pages > MAX_PAYMENT_PDF_PAGES) {
+    return `This PDF has ${pages} pages. Upload a payment proof of ${MAX_PAYMENT_PDF_PAGES} pages or fewer.`;
+  }
+  return '';
 }
 
 /** Calendar day for Zoho Payments Received (no timezone day-shift). */
@@ -639,12 +653,9 @@ export async function createPayments({ user, files, env, hints = {} }) {
       bytes: file.buffer,
       maxBytes: env.upload.maxBytes,
     });
-    if (!inspected.ok) {
-      rejected.push({ name: filename, error: inspected.error });
-      continue;
-    }
-    if (inspected.mime === 'application/pdf') {
-      rejected.push({ name: filename, error: 'Upload a screenshot image (JPEG, PNG or WebP), not a PDF.' });
+    const block = paymentUploadBlock(inspected, file.buffer);
+    if (block) {
+      rejected.push({ name: filename, error: block });
       continue;
     }
 

@@ -143,6 +143,7 @@ export default function PaymentDetail() {
   const canReview = user?.role === 'accountant' || user?.role === 'admin';
   const [payment, setPayment] = useState(null);
   const [imageUrl, setImageUrl] = useState('');
+  const [proofMime, setProofMime] = useState('');
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [suggesting, setSuggesting] = useState(false);
@@ -171,6 +172,7 @@ export default function PaymentDetail() {
     setQuery((prev) => prev || row.confirmed?.customerName || row.invoice?.customer?.name || '');
     if (!withFile) return;
     const file = await fetchPaymentFile(id);
+    setProofMime(file.mimeType || row.mimeType || '');
     setImageUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return URL.createObjectURL(file.blob);
@@ -581,7 +583,9 @@ export default function PaymentDetail() {
 
       <div className="review-grid payment-match-grid">
         <section className="card">
-          {imageUrl ? (
+          {imageUrl && /pdf/i.test(proofMime) ? (
+            <iframe className="payment-shot" title="Payment proof" src={imageUrl} />
+          ) : imageUrl ? (
             <img className="payment-shot" src={imageUrl} alt="Bank transfer screenshot" />
           ) : (
             <div className="payment-shot-skeleton" aria-hidden="true" />

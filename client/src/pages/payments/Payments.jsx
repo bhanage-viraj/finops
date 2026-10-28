@@ -110,6 +110,17 @@ function rowLabel(payment) {
     || 'Screenshot';
 }
 
+function isPdfFile(file) {
+  const type = String(file?.type || '').toLowerCase();
+  const name = String(file?.name || '').toLowerCase();
+  return type === 'application/pdf' || name.endsWith('.pdf');
+}
+
+function isPaymentProof(file) {
+  const type = String(file?.type || '').toLowerCase();
+  return type.startsWith('image/') || isPdfFile(file);
+}
+
 export default function Payments() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -166,9 +177,9 @@ export default function Payments() {
   }, [pending]);
 
   function addFiles(list) {
-    const files = [...(list || [])].filter((file) => file.type.startsWith('image/'));
+    const files = [...(list || [])].filter(isPaymentProof);
     if (!files.length) {
-      setError('Only screenshot images can be added here.');
+      setError('Add a JPEG, PNG, WebP, or PDF payment proof.');
       return;
     }
     if (busy) return;
@@ -190,7 +201,7 @@ export default function Payments() {
     function onPaste(event) {
       const items = [...(event.clipboardData?.items || [])];
       const images = items
-        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .filter((item) => item.kind === 'file' && (item.type.startsWith('image/') || item.type === 'application/pdf'))
         .map((item) => item.getAsFile())
         .filter(Boolean);
       if (!images.length) return;
@@ -291,7 +302,7 @@ export default function Payments() {
       >
         <h2>From WhatsApp</h2>
         <p className="hint">
-          Type the customer name from the chat (example: AN Balinest, or Toko Sariboga 29.9), then add the bank transfer screenshot:
+          Type the customer name from the chat (example: AN Balinest, or Toko Sariboga 29.9), then add the bank transfer screenshot or PDF:
           paste it (Ctrl/Cmd+V), drag it here, or choose a file. On the payment, set the date range and Select all to take every matching villa at once.
           Zoho records one Bank Transfer per villa.
         </p>
@@ -310,10 +321,16 @@ export default function Payments() {
 
         {pending.length > 0 ? (
           <div className="payment-pending">
-            {pendingPreview && <img src={pendingPreview} alt="Screenshot waiting to upload" />}
+            {pendingPreview && (isPdfFile(pending[0]) ? (
+              <iframe className="payment-shot" title="PDF waiting to upload" src={pendingPreview} />
+            ) : (
+              <img src={pendingPreview} alt="Screenshot waiting to upload" />
+            ))}
             <div>
               <p className="hint">
-                {pending.length === 1 ? 'Screenshot ready.' : `${pending.length} screenshots ready.`}
+                {pending.length === 1
+                  ? (isPdfFile(pending[0]) ? 'PDF ready.' : 'Screenshot ready.')
+                  : `${pending.length} files ready.`}
                 {captionReady ? ' Press Upload or Enter.' : ' Type the customer name, then press Upload.'}
               </p>
               <div className="actions">
@@ -339,13 +356,13 @@ export default function Payments() {
         ) : (
           <div className="payment-drop">
             <p className="hint">
-              {dragging ? 'Drop the screenshot here' : 'Paste or drop the bank screenshot here'}
+              {dragging ? 'Drop the payment proof here' : 'Paste or drop the bank screenshot or PDF here'}
             </p>
             <label className={`btn btn-primary${busy ? ' is-disabled' : ''}`}>
-              {busy ? 'Saving…' : 'Choose screenshot'}
+              {busy ? 'Saving…' : 'Choose screenshot or PDF'}
               <input
                 type="file"
-                accept="image/*"
+                accept="image/*,application/pdf,.pdf"
                 multiple
                 disabled={busy}
                 onChange={onPick}

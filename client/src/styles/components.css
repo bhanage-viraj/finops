@@ -385,6 +385,10 @@ a.btn {
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
 }
+iframe.payment-shot {
+  height: 70vh;
+  min-height: 28rem;
+}
 .payment-shot-skeleton {
   width: 100%;
   min-height: 220px;
