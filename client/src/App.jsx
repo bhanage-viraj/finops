@@ -9,6 +9,7 @@ import FollowUp from './pages/followUp/FollowUp.jsx';
 import Payments from './pages/payments/Payments.jsx';
 import PaymentDetail from './pages/payments/PaymentDetail.jsx';
 import DeliveryDays from './pages/deliveries/DeliveryDays.jsx';
+import MarketTrends from './pages/deliveries/MarketTrends.jsx';
 import DayDetail from './pages/deliveries/DayDetail.jsx';
 import SpeedCharts from './pages/deliveries/SpeedCharts.jsx';
 
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="payments/:id" element={<PaymentDetail />} />
         <Route path="follow-up" element={<FollowUp />} />
         <Route path="deliver" element={<DeliveryDays />} />
+        <Route path="demand" element={<MarketTrends />} />
         <Route path="deliver/speed" element={<SpeedCharts />} />
         <Route path="deliver/:dayId" element={<DayDetail />} />
         <Route path="deliveries" element={<Navigate to="/deliver" replace />} />

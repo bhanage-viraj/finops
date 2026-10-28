@@ -7,10 +7,12 @@ const OFFICE_LINKS = [
   ['/payments', 'Payments'],
   ['/follow-up', 'Follow-up'],
   ['/deliver', 'Deliver'],
+  ['/demand', 'Demand'],
 ];
 
 const DELIVERY_LINKS = [
   ['/deliver', 'Deliver'],
+  ['/demand', 'Demand'],
 ];
 
 export default function Sidebar() {

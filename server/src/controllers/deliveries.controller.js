@@ -38,9 +38,16 @@ import {
   linkVehiclesFromCartrack,
 } from '../services/deliveries/cartrackSync.js';
 import { speedForDay, speedForFleet } from '../services/deliveries/speedTrace.js';
+import { loadMarketTrends } from '../services/deliveries/marketTrends.js';
 import { attachNotaToStop, confirmNota, emptiesBalance } from '../services/deliveries/notaReader.js';
 import DeliveryStop from '../models/DeliveryStop.js';
 import { createFileStorage } from '../services/storage/fileStorage.js';
+
+export function market() {
+  return asyncHandler(async (req, res) => {
+    res.json(await loadMarketTrends({ refresh: req.query.refresh === '1' }));
+  });
+}
 
 export function list(env) {
   return asyncHandler(async (req, res) => {

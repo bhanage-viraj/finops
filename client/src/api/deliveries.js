@@ -4,6 +4,11 @@ export function fetchDeliveryDays() {
   return api('/deliveries');
 }
 
+export function fetchMarketTrends(refresh = false) {
+  const suffix = refresh ? '?refresh=1' : '';
+  return api(`/deliveries/market${suffix}`);
+}
+
 export function fetchDeliveryMeta() {
   return api('/deliveries/meta');
 }

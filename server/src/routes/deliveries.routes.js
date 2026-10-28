@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   list,
+  market,
   meta,
   detail,
   importDay,
@@ -46,10 +47,12 @@ export function createDeliveriesRouter(env) {
   const router = Router();
   router.use(requireAuth(env));
   const ops = requireRole('delivery', 'accountant', 'admin');
+  const readers = requireRole('staff', 'delivery', 'accountant', 'admin');
   const admin = requireRole('admin');
   const upload = documentUploadSingle(env.upload.maxBytes);
 
   router.get('/', ops, list(env));
+  router.get('/market', readers, market());
   router.get('/meta', ops, meta());
   router.get('/settings/cartrack', ops, cartrackSetting());
   router.post('/settings/cartrack', admin, cartrackSetting());

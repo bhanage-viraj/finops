@@ -8,6 +8,7 @@ const FEATURES = [
   ['/payments', 'Payments', 'Match bank transfer screenshots'],
   ['/follow-up', 'Follow-up', 'Remind overdue customers'],
   ['/deliver', 'Deliver', 'Routes, maps, Cartrack (read-only), receipt check'],
+  ['/demand', 'Demand', 'Month by month, overall galon and who is ordering'],
 ];
 
 function ZohoConnect() {
