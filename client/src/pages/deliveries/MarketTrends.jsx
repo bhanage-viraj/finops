@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { fetchMarketTrends } from '../../api/deliveries.js';
+import { fetchSales } from '../../api/deliveries.js';
+import { formatRupiah } from '../../utils/formatRupiah.js';
 
 const CHANNELS = [
   ['home', 'Home-based'],
@@ -7,14 +8,6 @@ const CHANNELS = [
   ['restaurant', 'Restaurant'],
   ['depo', 'Depo'],
 ];
-
-const KIND_LABEL = {
-  gallon: 'Galon',
-  glass: 'Galon kaca',
-  bottle: 'Bottles',
-  can: 'Cans',
-  ice: 'Ice',
-};
 
 function formatCount(value) {
   return Number(value || 0).toLocaleString('id-ID');
@@ -27,22 +20,13 @@ function formatMonth(key, label) {
   return date.toLocaleDateString('id-ID', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
-function dayNumber(iso) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
-  return match ? String(Number(match[3])) : '';
-}
-
 function Trend({ rows, caption }) {
   const max = Math.max(1, ...rows.map((row) => row.value));
   return (
     <div className="trend" role="img" aria-label={caption}>
       {rows.map((row) => (
         <div className="trend-col" key={row.key}>
-          <span className="trend-value">{formatCount(row.value)}</span>
-          <span
-            className="trend-bar"
-            style={{ height: `${Math.max(row.value > 0 ? 8 : 0, Math.round((row.value / max) * 120))}px` }}
-          />
+          <span className="trend-bar" style={{ height: `${Math.max(row.value > 0 ? 8 : 0, Math.round((row.value / max) * 120))}px` }} />
           <span className="trend-label">{row.label}</span>
         </div>
       ))}
@@ -58,9 +42,9 @@ export default function MarketTrends() {
   function load(refresh = false) {
     setBusy(true);
     setError('');
-    fetchMarketTrends(refresh)
+    fetchSales(refresh)
       .then((body) => setData(body))
-      .catch((err) => setError(err.message || 'The sheet could not be read.'))
+      .catch((err) => setError(err.message || 'Zoho sales could not be read.'))
       .finally(() => setBusy(false));
   }
 
@@ -71,20 +55,15 @@ export default function MarketTrends() {
   const months = data?.months || [];
   const month = data?.latestMonth;
   const monthName = month ? formatMonth(month.month, month.label) : '';
-  const channelRows = CHANNELS.map(([key, label]) => ({
-    key,
-    label,
-    value: month?.channels?.[key]?.gallons || 0,
-  }));
   const monthBars = months.map((row) => ({
     key: row.month,
     label: formatMonth(row.month, row.label).split(' ')[0],
-    value: row.gallons,
+    value: row.total,
   }));
-  const dayBars = (month?.byDay || []).map((row) => ({
-    key: row.date,
-    label: dayNumber(row.date),
-    value: row.gallons,
+  const channelRows = CHANNELS.map(([key, label]) => ({
+    key,
+    label,
+    value: month?.channels?.[key]?.total || 0,
   }));
 
   return (
@@ -93,64 +72,55 @@ export default function MarketTrends() {
         <div>
           <h1>Demand</h1>
           <p className="hint">
-            Overall galon by month, from {data?.sourceName || 'LIST DRIVER 2026'}. The daily number is the average for that month.
+            All sales from Zoho Books, by month. Paid and still unpaid invoices are included. Drafts and voids are left out.
           </p>
         </div>
         <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => load(true)}>
-          {busy ? 'Reading sheet…' : 'Reload sheet'}
+          {busy ? 'Reading Zoho…' : 'Reload Zoho'}
         </button>
       </div>
 
       {error && <p className="message message-bad">{error}</p>}
-      {busy && !month && !error && <p className="hint">Reading the driver lists…</p>}
+      {data?.truncated && (
+        <p className="message message-warn">Zoho did not return every invoice. These totals can be short.</p>
+      )}
+      {busy && !month && !error && <p className="hint">Reading every sale from Zoho. The first time can take a minute.</p>}
 
       {month && (
         <>
           <div className="stat-grid demand-stats">
             <section className="card stat-card">
-              <p className="field-label">Per day this month</p>
-              <p className="stat-number">{formatCount(month.dailyAverage)}</p>
-              <p className="hint">{monthName}</p>
+              <p className="field-label">Sales this month</p>
+              <p className="stat-number">{formatRupiah(month.total)}</p>
+              <p className="hint">{monthName} · {formatCount(month.count)} invoices</p>
             </section>
             <section className="card stat-card">
-              <p className="field-label">Galon this month</p>
-              <p className="stat-number">{formatCount(month.gallons)}</p>
-              <p className="hint">
-                {month.dayCount} day{month.dayCount === 1 ? '' : 's'} saved
-                {month.qtyMissing > 0 ? ` · ${formatCount(month.qtyMissing)} lines have no quantity` : ''}
-              </p>
+              <p className="field-label">Per selling day</p>
+              <p className="stat-number">{formatRupiah(month.dailyAverage)}</p>
+              <p className="hint">{formatCount(month.dayCount)} days with a sale</p>
             </section>
             <section className="card stat-card">
               <p className="field-label">High season</p>
-              <p className="stat-number">{data.season?.ready ? formatCount(data.season.high.gallons) : '—'}</p>
-              <p className="hint">{data.season?.ready ? formatMonth(data.season.high.month, data.season.high.label) : 'Needs two months'}</p>
+              <p className="stat-number">{data.season?.ready ? formatRupiah(data.season.high.total) : '—'}</p>
+              <p className="hint">{data.season?.ready ? formatMonth(data.season.high.month, data.season.high.label) : 'Needs two full months'}</p>
             </section>
             <section className="card stat-card">
               <p className="field-label">Low season</p>
-              <p className="stat-number">{data.season?.ready ? formatCount(data.season.low.gallons) : '—'}</p>
-              <p className="hint">{data.season?.ready ? formatMonth(data.season.low.month, data.season.low.label) : 'Needs two months'}</p>
+              <p className="stat-number">{data.season?.ready ? formatRupiah(data.season.low.total) : '—'}</p>
+              <p className="hint">{data.season?.ready ? formatMonth(data.season.low.month, data.season.low.label) : 'Needs two full months'}</p>
             </section>
           </div>
 
           <section className="card demand-section">
-            <h2>{monthName}</h2>
-            <p className="hint">Galon each day, for the whole company. Not split by area.</p>
+            <h2>Sales by month</h2>
+            <p className="hint">
+              {formatRupiah(data.total)} across {formatCount(data.invoiceCount)} invoices.
+            </p>
             <Trend
-              rows={dayBars}
-              caption={`${monthName} galon by day. ${dayBars.map((row) => `${row.label} ${formatCount(row.value)}`).join(', ')}`}
+              rows={monthBars}
+              caption={monthBars.map((row) => `${row.label} ${formatRupiah(row.value)}`).join(', ')}
             />
           </section>
-
-          {months.length > 1 && (
-            <section className="card demand-section">
-              <h2>Months</h2>
-              <p className="hint">Total galon in each month.</p>
-              <Trend
-                rows={monthBars}
-                caption={monthBars.map((row) => `${row.label} ${formatCount(row.value)}`).join(', ')}
-              />
-            </section>
-          )}
 
           <section className="card demand-section">
             <h2>By month</h2>
@@ -159,8 +129,8 @@ export default function MarketTrends() {
                 <thead>
                   <tr>
                     <th>Month</th>
-                    <th className="num">Days</th>
-                    <th className="num">Galon</th>
+                    <th className="num">Invoices</th>
+                    <th className="num">Sales</th>
                     <th className="num">Per day</th>
                     <th className="num">Home</th>
                     <th className="num">Hotel</th>
@@ -172,13 +142,13 @@ export default function MarketTrends() {
                   {months.map((row) => (
                     <tr key={row.month}>
                       <td>{formatMonth(row.month, row.label)}</td>
-                      <td className="num">{formatCount(row.dayCount)}</td>
-                      <td className="num">{formatCount(row.gallons)}</td>
-                      <td className="num">{formatCount(row.dailyAverage)}</td>
-                      <td className="num">{formatCount(row.channels.home.gallons)}</td>
-                      <td className="num">{formatCount(row.channels.hotel.gallons)}</td>
-                      <td className="num">{formatCount(row.channels.restaurant.gallons)}</td>
-                      <td className="num">{formatCount(row.channels.depo.gallons)}</td>
+                      <td className="num">{formatCount(row.count)}</td>
+                      <td className="num">{formatRupiah(row.total)}</td>
+                      <td className="num">{formatRupiah(row.dailyAverage)}</td>
+                      <td className="num">{formatRupiah(row.channels.home.total)}</td>
+                      <td className="num">{formatRupiah(row.channels.hotel.total)}</td>
+                      <td className="num">{formatRupiah(row.channels.restaurant.total)}</td>
+                      <td className="num">{formatRupiah(row.channels.depo.total)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -187,8 +157,8 @@ export default function MarketTrends() {
           </section>
 
           <section className="card demand-section">
-            <h2>Who ordered in {monthName}</h2>
-            <p className="hint">Galon in the month, from the customer name. Home, hotel, restaurant, and depo.</p>
+            <h2>Who bought in {monthName}</h2>
+            <p className="hint">Sales in the latest month, from the customer name on the invoice.</p>
             <div className="demand-bars">
               {channelRows.map((row) => {
                 const top = Math.max(1, ...channelRows.map((item) => item.value));
@@ -198,54 +168,17 @@ export default function MarketTrends() {
                     <span className="demand-bar-track" aria-hidden="true">
                       <span className="demand-bar-fill" style={{ width: row.value > 0 ? `${Math.max(4, Math.round((row.value / top) * 100))}%` : '0%' }} />
                     </span>
-                    <strong>{formatCount(row.value)}</strong>
+                    <strong>{formatRupiah(row.value)}</strong>
                   </div>
                 );
               })}
             </div>
-            {month.newCustomers > 0 && (
-              <p className="hint">{formatCount(month.newCustomers)} names marked Baru or New.</p>
-            )}
-          </section>
-
-          <section className="card demand-section">
-            <h2>Prepare or purchase</h2>
             <p className="hint">
-              {monthName}
-              {month.prepare.length > 0
-                ? ` · per day ${month.prepare.map((row) => `${KIND_LABEL[row.kind] || row.kind} ${formatCount(Math.round(row.qty / month.dayCount))}`).join(', ')}`
-                : ''}
+              Still unpaid in {monthName}: {formatRupiah(month.open)}. Already paid: {formatRupiah(month.paid)}.
             </p>
-            {month.products.length === 0 ? (
-              <p className="hint">No product quantities in this month yet.</p>
-            ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Product</th>
-                      <th className="num">Month</th>
-                      <th className="num">Per day</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {month.products.map((row) => (
-                      <tr key={row.name}>
-                        <td>{row.name}</td>
-                        <td className="num">{formatCount(row.qty)}</td>
-                        <td className="num">{formatCount(Math.round(row.qty / month.dayCount))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </section>
 
           <p className="hint">{data.season?.note}</p>
-          <p className="hint">
-            <a href={data.sheetUrl} target="_blank" rel="noreferrer">Open LIST DRIVER 2026</a>
-          </p>
         </>
       )}
     </>

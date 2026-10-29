@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   list,
   market,
+  sales,
   meta,
   detail,
   importDay,
@@ -39,6 +40,7 @@ import {
   notaFile,
 } from '../controllers/deliveries.controller.js';
 import { requireAuth } from '../middleware/auth.js';
+import { killSwitch } from '../middleware/killSwitch.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { cartrackKillSwitch } from '../middleware/cartrackKillSwitch.js';
 import { documentUploadSingle } from '../middleware/upload.js';
@@ -53,6 +55,7 @@ export function createDeliveriesRouter(env) {
 
   router.get('/', ops, list(env));
   router.get('/market', readers, market());
+  router.get('/sales', readers, killSwitch, sales(env));
   router.get('/meta', ops, meta());
   router.get('/settings/cartrack', ops, cartrackSetting());
   router.post('/settings/cartrack', admin, cartrackSetting());

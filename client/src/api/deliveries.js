@@ -9,6 +9,11 @@ export function fetchMarketTrends(refresh = false) {
   return api(`/deliveries/market${suffix}`);
 }
 
+export function fetchSales(refresh = false) {
+  const suffix = refresh ? '?refresh=1' : '';
+  return api(`/deliveries/sales${suffix}`);
+}
+
 export function fetchDeliveryMeta() {
   return api('/deliveries/meta');
 }
